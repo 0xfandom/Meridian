@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "description": "Frozen v1 surface for Meridian: target chains, the curated collateral set, and the first three protocol adapters. This manifest scopes the on-chain core build.",
+  "chains": {
+    "ethereum": { "chainId": 1, "role": "primary" }
+  },
+  "collateral": ["USDC", "WETH", "WBTC", "wstETH"],
+  "adapters": {
+    "uniswapV3": {
+      "protocol": "Uniswap v3",
+      "category": "dex",
+      "actions": ["swap"]
+    },
+    "curveConvex": {
+      "protocol": "Curve / Convex",
+      "category": "dex-yield",
+      "actions": ["addLiquidity", "removeLiquidity", "stake", "claim"]
+    },
+    "lstWstEth": {
+      "protocol": "Lido wstETH",
+      "category": "lst",
+      "actions": ["wrap", "unwrap"]
+    }
+  }
+}
