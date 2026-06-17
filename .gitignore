@@ -1,0 +1,21 @@
+# Node
+node_modules/
+.turbo/
+dist/
+*.log
+.pnpm-store/
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
