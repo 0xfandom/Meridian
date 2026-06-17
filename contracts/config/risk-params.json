@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "description": "Canonical risk parameters for Meridian. Basis points: 10000 = 100%. Health factors are also in bps where 10000 = 1.0. This file is the single source of truth consumed by the on-chain RiskConfigurator and the off-chain margin engine.",
+  "healthFactor": {
+    "warningBps": 12000,
+    "marginCallBps": 11000,
+    "liquidationBps": 10000
+  },
+  "interestRateModel": {
+    "baseRateBps": 0,
+    "slope1Bps": 400,
+    "slope2Bps": 6000,
+    "optimalUtilizationBps": 8000
+  },
+  "collateral": {
+    "symbols": ["USDC", "WETH", "WBTC", "wstETH"],
+    "haircutBps": [200, 1000, 1200, 1500],
+    "maxLeverageBps": [50000, 50000, 40000, 30000]
+  }
+}
