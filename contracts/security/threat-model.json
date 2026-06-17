@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "system": "Meridian",
+  "custodyModel": {
+    "type": "non-custodial",
+    "statement": "User funds remain in user-controlled ERC-4626 pools and account-scoped margin accounts. The protocol never takes custody. Privileged powers are limited to parameter governance behind a timelock, emergency pause, and permissioned liquidation keepers. Asset managers can only route through whitelisted protocols via constrained adapters; they cannot withdraw collateral to arbitrary destinations.",
+    "privilegedRoles": [
+      "Governor (timelock)",
+      "Guardian (emergency pause)",
+      "Keeper (permissioned liquidation)"
+    ]
+  },
+  "trustBoundaries": {
+    "TB01": {
+      "name": "Pool",
+      "description": "Lender deposits and share accounting. Holds idle and lent capital.",
+      "trustExpansion": "none"
+    },
+    "TB02": {
+      "name": "MarginAccount",
+      "description": "Per-borrower account holding collateral and debt; can only call whitelisted adapters.",
+      "trustExpansion": "none"
+    },
+    "TB03": {
+      "name": "Adapters",
+      "description": "Constrained gateways to external protocols. Each new adapter widens the external attack surface.",
+      "trustExpansion": "external-protocol"
+    },
+    "TB04": {
+      "name": "MarginEngine",
+      "description": "Off-chain portfolio risk engine. Produces advisory signals only; never authoritative over solvency.",
+      "trustExpansion": "off-chain"
+    },
+    "TB05": {
+      "name": "Governance",
+      "description": "Multisig and timelock controlling parameters and upgrades.",
+      "trustExpansion": "privileged"
+    }
+  },
+  "auditGates": {
+    "Audit1": {
+      "scope": "Core: pool, credit manager, margin account, two to three adapters, liquidation.",
+      "trigger": "Before institutional mainnet beta."
+    },
+    "Audit2": {
+      "scope": "Margin-engine integration points, additional adapters, multi-chain.",
+      "trigger": "Before scaling caps."
+    },
+    "Audit3": {
+      "scope": "Permissionless and retail surface plus public audit contest.",
+      "trigger": "Before retail launch."
+    }
+  },
+  "threats": {
+    "T01": {
+      "category": "Tampering",
+      "title": "Oracle price manipulation",
+      "asset": "PriceOracle",
+      "severity": "critical",
+      "mitigation": "Chainlink feeds with staleness and deviation guards; collateral haircuts; stress-tested value used for health.",
+      "auditGate": "Audit1"
+    },
+    "T02": {
+      "category": "ElevationOfPrivilege",
+      "title": "Unauthorized external call through an adapter",
+      "asset": "Adapter",
+      "severity": "critical",
+      "mitigation": "WhitelistRegistry of protocols, assets, and selectors; account-scoped routing; adapters cannot move funds to arbitrary destinations.",
+      "auditGate": "Audit1"
+    },
+    "T03": {
+      "category": "DenialOfService",
+      "title": "Failure to liquidate an unhealthy account",
+      "asset": "LiquidationModule",
+      "severity": "high",
+      "mitigation": "Permissioned keepers with watchdog; on-chain liquidation floor independent of the off-chain engine; private submission to resist censorship.",
+      "auditGate": "Audit1"
+    },
+    "T04": {
+      "category": "Tampering",
+      "title": "Pool share inflation (first-depositor attack)",
+      "asset": "Pool",
+      "severity": "high",
+      "mitigation": "ERC-4626 virtual shares and decimals offset; minimum initial deposit seeded at deployment.",
+      "auditGate": "Audit1"
+    },
+    "T05": {
+      "category": "ElevationOfPrivilege",
+      "title": "Privileged role compromise",
+      "asset": "AccessController",
+      "severity": "critical",
+      "mitigation": "Safe multisig plus timelock on parameters and upgrades; guardian limited to pause; minimal admin surface.",
+      "auditGate": "Audit1"
+    },
+    "T06": {
+      "category": "Tampering",
+      "title": "Reentrancy across adapter calls",
+      "asset": "CreditFacade",
+      "severity": "high",
+      "mitigation": "Checks-effects-interactions, reentrancy guards, and a single health check enforced after the full multicall.",
+      "auditGate": "Audit1"
+    },
+    "T07": {
+      "category": "Spoofing",
+      "title": "Margin-engine signal spoofing",
+      "asset": "MarginEngine",
+      "severity": "medium",
+      "mitigation": "Engine signals are advisory; the on-chain floor is authoritative for solvency; signed and authenticated feeds.",
+      "auditGate": "Audit2"
+    },
+    "T08": {
+      "category": "Repudiation",
+      "title": "Disputed privileged action without audit trail",
+      "asset": "Governance",
+      "severity": "medium",
+      "mitigation": "All privileged actions are timelocked and emit events; an off-chain audit log records actor, action, and timestamp.",
+      "auditGate": "Audit2"
+    }
+  }
+}
