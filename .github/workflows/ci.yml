@@ -58,7 +58,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Prettier
-        run: pnpm fmt:check --no-color
+        run: pnpm exec prettier --check "**/*.{js,ts,tsx,json,yaml,yml}"
 
       - name: Solhint
         run: pnpm lint:sol
