@@ -13,6 +13,7 @@ import {IInterestRateModel} from "./interfaces/IInterestRateModel.sol";
 import {IPriceOracle} from "./interfaces/IPriceOracle.sol";
 import {IRiskConfigurator} from "./interfaces/IRiskConfigurator.sol";
 import {IGuardian} from "./interfaces/IGuardian.sol";
+import {IWhitelistRegistry} from "./interfaces/IWhitelistRegistry.sol";
 import {MarginAccount} from "./MarginAccount.sol";
 
 /// @title CreditManager
@@ -41,6 +42,7 @@ contract CreditManager is Ownable, ReentrancyGuard {
     IPriceOracle public oracle;
     IRiskConfigurator public riskConfigurator;
     IGuardian public guardian;
+    IWhitelistRegistry public whitelistRegistry;
     address public facade;
 
     uint256 public borrowIndex = RAY;
@@ -71,6 +73,7 @@ contract CreditManager is Ownable, ReentrancyGuard {
     event OracleSet(address indexed oracle);
     event RiskConfiguratorSet(address indexed riskConfigurator);
     event GuardianSet(address indexed guardian);
+    event WhitelistRegistrySet(address indexed whitelistRegistry);
     event FacadeSet(address indexed facade);
 
     error ZeroAddress();
@@ -78,6 +81,7 @@ contract CreditManager is Ownable, ReentrancyGuard {
     error UnknownAccount();
     error AccountNotEmpty();
     error Undercollateralized();
+    error CallNotWhitelisted(address target, bytes4 selector);
 
     /// @dev Reverts when a guardian is set and the protocol is paused. Debt repayment, collateral
     ///      top-ups, and account closure are intentionally left ungated so positions can always be
@@ -133,6 +137,13 @@ contract CreditManager is Ownable, ReentrancyGuard {
     function setGuardian(IGuardian guardian_) external onlyOwner {
         guardian = guardian_;
         emit GuardianSet(address(guardian_));
+    }
+
+    /// @notice Sets (or clears) the multicall allowlist. When unset, multicall targets are
+    ///         unrestricted; once set, every routed call must be an allowed (target, selector).
+    function setWhitelistRegistry(IWhitelistRegistry whitelistRegistry_) external onlyOwner {
+        whitelistRegistry = whitelistRegistry_;
+        emit WhitelistRegistrySet(address(whitelistRegistry_));
     }
 
     function setFacade(address facade_) external onlyOwner {
@@ -257,15 +268,23 @@ contract CreditManager is Ownable, ReentrancyGuard {
 
     /// @notice Routes a batch of calls through the account, then enforces health exactly once.
     /// @dev The single post-batch health check is what makes batched, leveraged actions safe:
-    ///      intermediate states may be unhealthy, but the account cannot end unhealthy. Target
-    ///      whitelisting (added with the adapter registry) further constrains what may be called.
+    ///      intermediate states may be unhealthy, but the account cannot end unhealthy. When a
+    ///      whitelist registry is set, every call must target an allowed (target, selector) pair,
+    ///      constraining an account to sanctioned protocols and methods.
     function multicall(address account, MultiCall[] calldata calls) external nonReentrant whenNotPaused {
         _authorized(account);
         _accrueIndex();
 
+        IWhitelistRegistry registry = whitelistRegistry;
         uint256 len = calls.length;
         for (uint256 i = 0; i < len; i++) {
-            MarginAccount(account).execute(calls[i].target, calls[i].callData);
+            address target = calls[i].target;
+            bytes calldata callData = calls[i].callData;
+            if (address(registry) != address(0)) {
+                bytes4 selector = callData.length >= 4 ? bytes4(callData[:4]) : bytes4(0);
+                if (!registry.isAllowed(target, selector)) revert CallNotWhitelisted(target, selector);
+            }
+            MarginAccount(account).execute(target, callData);
         }
 
         _requireHealthy(account);
