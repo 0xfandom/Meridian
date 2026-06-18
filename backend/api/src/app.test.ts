@@ -1,0 +1,113 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { privateKeyToAccount } from "viem/accounts";
+import { createSiweMessage } from "viem/siwe";
+import { createApp } from "./app.js";
+import { NonceStore } from "./auth/siwe.js";
+import { loadConfig } from "./config.js";
+import { SnapshotSource } from "./state/source.js";
+
+const NOW = 1_700_000_000;
+const user = privateKeyToAccount(
+  "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+);
+const ACCOUNT = "0x00000000000000000000000000000000000000A1";
+const OWNER = "0x00000000000000000000000000000000000000B2";
+
+function snapshotJson(): string {
+  return JSON.stringify({
+    pool: { totalDeposited: "1000n", totalBorrowed: "700n", cumulativeInterestRepaid: "32n" },
+    accounts: {
+      [ACCOUNT]: {
+        account: ACCOUNT,
+        owner: OWNER,
+        facePrincipal: "700n",
+        collateralDeposited: "100n",
+        open: true,
+        liquidated: false,
+      },
+    },
+    liquidations: [],
+    lastBlock: "5n",
+  });
+}
+
+function buildApp() {
+  const dir = mkdtempSync(join(tmpdir(), "meridian-api-"));
+  const snapPath = join(dir, "indexer-state.json");
+  writeFileSync(snapPath, snapshotJson());
+  const config = loadConfig({
+    INDEXER_SNAPSHOT_PATH: snapPath,
+    API_SIWE_DOMAIN: "example.com",
+    API_SIWE_CHAIN_ID: "1",
+    API_SESSION_SECRET: "test-secret",
+  } as NodeJS.ProcessEnv);
+  return createApp({
+    config,
+    source: new SnapshotSource(snapPath),
+    nonces: new NonceStore(),
+    now: () => NOW,
+  });
+}
+
+describe("API routes", () => {
+  it("serves health and pool views", async () => {
+    const app = buildApp();
+
+    const health = await app.request("/health");
+    expect(health.status).toBe(200);
+    expect(await health.json()).toEqual({ status: "ok", lastBlock: "5" });
+
+    const pools = (await (await app.request("/pools")).json()) as Record<string, string>;
+    expect(pools.totalBorrowed).toBe("700");
+    expect(pools.utilizationWad).toBe("700000000000000000");
+  });
+
+  it("serves account and position lookups", async () => {
+    const app = buildApp();
+
+    expect((await (await app.request("/accounts")).json()) as unknown[]).toHaveLength(1);
+    expect((await app.request(`/accounts/${ACCOUNT}`)).status).toBe(200);
+    expect((await app.request("/accounts/not-an-address")).status).toBe(400);
+    expect((await app.request("/accounts/0x0000000000000000000000000000000000000999")).status).toBe(
+      404,
+    );
+    expect((await (await app.request("/positions")).json()) as unknown[]).toHaveLength(1);
+    expect((await (await app.request("/liquidations")).json()) as unknown[]).toHaveLength(0);
+  });
+
+  it("runs the SIWE login flow and authorizes /me", async () => {
+    const app = buildApp();
+
+    const { nonce } = (await (await app.request("/auth/nonce", { method: "POST" })).json()) as {
+      nonce: string;
+    };
+    const message = createSiweMessage({
+      address: user.address,
+      domain: "example.com",
+      uri: "https://example.com",
+      version: "1",
+      chainId: 1,
+      nonce,
+      issuedAt: new Date(NOW * 1000),
+    });
+    const signature = await user.signMessage({ message });
+
+    const verifyRes = await app.request("/auth/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message, signature }),
+    });
+    expect(verifyRes.status).toBe(200);
+    const { token, address } = (await verifyRes.json()) as { token: string; address: string };
+    expect(address.toLowerCase()).toBe(user.address.toLowerCase());
+
+    const me = await app.request("/me", { headers: { authorization: `Bearer ${token}` } });
+    expect(me.status).toBe(200);
+    expect(((await me.json()) as { address: string }).address).toBe(user.address.toLowerCase());
+
+    expect((await app.request("/me")).status).toBe(401);
+  });
+});
