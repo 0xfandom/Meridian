@@ -93,3 +93,30 @@ jobs:
 
       - name: Build
         run: pnpm --filter @meridian/${{ matrix.package }} build
+
+  margin-engine:
+    name: Margin Engine
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/margin-engine
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: ruff check . && ruff format --check .
+
+      - name: Typecheck
+        run: mypy
+
+      - name: Test
+        run: pytest -q
