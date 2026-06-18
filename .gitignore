@@ -31,3 +31,6 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+
+# Go build output
+backend/keeper/keeper
