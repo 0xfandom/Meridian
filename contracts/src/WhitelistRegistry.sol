@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IWhitelistRegistry} from "./interfaces/IWhitelistRegistry.sol";
 
 /// @title WhitelistRegistry
 /// @notice Allowlist of external call targets and the specific function selectors permitted on
@@ -9,7 +10,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 ///         account can only ever touch sanctioned protocols and methods.
 /// @dev A call is permitted only when both the target and the exact selector are enabled,
 ///      keeping the surface deliberately narrow.
-contract WhitelistRegistry is Ownable {
+contract WhitelistRegistry is Ownable, IWhitelistRegistry {
     mapping(address target => bool allowed) public allowedTarget;
     mapping(address target => mapping(bytes4 selector => bool allowed)) public allowedSelector;
 
@@ -33,7 +34,7 @@ contract WhitelistRegistry is Ownable {
     }
 
     /// @notice True only when both the target and the selector are enabled.
-    function isAllowed(address target, bytes4 selector) external view returns (bool) {
+    function isAllowed(address target, bytes4 selector) external view override returns (bool) {
         return allowedTarget[target] && allowedSelector[target][selector];
     }
 }
