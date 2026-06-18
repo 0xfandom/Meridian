@@ -1,0 +1,16 @@
+{
+  "_comment": "Template for a public testnet deploy. Fill in real token, feed, and keeper addresses. Only the local profile is wired today; the non-local path is a follow-up.",
+  "keeper": "0x0000000000000000000000000000000000000000",
+  "usdc": "0x0000000000000000000000000000000000000000",
+  "weth": "0x0000000000000000000000000000000000000000",
+  "wethUsdFeed": "0x0000000000000000000000000000000000000000",
+  "warningBps": 12000,
+  "marginCallBps": 11000,
+  "liquidationBps": 10000,
+  "baseRateBps": 0,
+  "slope1Bps": 400,
+  "slope2Bps": 6000,
+  "optimalUtilizationBps": 8000,
+  "wethHaircutBps": 1000,
+  "wethMaxLeverageBps": 50000
+}
