@@ -1,0 +1,52 @@
+{
+  "utilization_high": {
+    "title": "Pool utilization high",
+    "severity": "warning",
+    "steps": [
+      "Confirm utilization on the dashboard and in /metrics (meridian_pool_utilization_ratio).",
+      "Check whether a single borrower is driving the draw via /accounts and /positions.",
+      "Near 100% utilization, withdrawals are liquidity-capped; communicate this to lenders.",
+      "If utilization stays elevated, consider adjusting the interest-rate curve via governance."
+    ]
+  },
+  "accounts_near_floor": {
+    "title": "Accounts approaching the liquidation floor",
+    "severity": "warning",
+    "steps": [
+      "Identify the affected accounts from the margin engine /risk output.",
+      "Confirm the keeper is running and reading health (keeper logs, dry-run off in production).",
+      "Verify oracle prices are fresh; a stale feed can distort health factors.",
+      "No action is required if health is recovering; escalate only if accounts cross the floor."
+    ]
+  },
+  "accounts_liquidatable": {
+    "title": "Accounts below the liquidation floor",
+    "severity": "critical",
+    "steps": [
+      "Confirm the keeper has submitted liquidations (keeper logs, on-chain Liquidate events).",
+      "If none submitted, check keeper RPC health, the signing key balance, and KEEPER_DRY_RUN.",
+      "As a fallback, submit LiquidationModule.liquidate(account) from an authorized keeper key.",
+      "Confirm the pool was made whole after liquidation via the indexer and /pools."
+    ]
+  },
+  "new_liquidations": {
+    "title": "New liquidations observed",
+    "severity": "warning",
+    "steps": [
+      "Review the liquidations in the indexer (/liquidations) and on-chain receipts.",
+      "Confirm each made the pool whole and seized collateral as expected.",
+      "Correlate with the price move or utilization spike that triggered them.",
+      "No action needed for routine liquidations; investigate clusters or bad debt."
+    ]
+  },
+  "snapshot_stale": {
+    "title": "Indexer snapshot stale",
+    "severity": "critical",
+    "steps": [
+      "Check the indexer process and logs; confirm it is still polling the chain tip.",
+      "Verify the indexer RPC endpoint is reachable and not rate-limited.",
+      "Confirm INDEXER_SNAPSHOT_PATH is writable and shared with the alerts service.",
+      "Restart the indexer if needed; it resumes from the last fully-scanned block."
+    ]
+  }
+}

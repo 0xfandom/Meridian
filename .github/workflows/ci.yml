@@ -69,7 +69,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [indexer, api]
+        package: [indexer, api, alerts]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

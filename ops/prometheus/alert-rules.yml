@@ -1,0 +1,35 @@
+groups:
+  - name: meridian
+    rules:
+      - alert: PoolUtilizationHigh
+        expr: meridian_pool_utilization_ratio >= 0.85
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Pool utilization above the warning threshold
+          runbook: utilization_high
+      - alert: PoolUtilizationCritical
+        expr: meridian_pool_utilization_ratio >= 0.95
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Pool utilization at or above the critical threshold
+          runbook: utilization_high
+      - alert: CriticalAlertsActive
+        expr: meridian_active_alerts{severity="critical"} > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: One or more critical protocol alerts are active
+          runbook: accounts_liquidatable
+      - alert: IndexerSnapshotStale
+        expr: meridian_snapshot_age_seconds > 60
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Indexer snapshot has stopped advancing
+          runbook: snapshot_stale
