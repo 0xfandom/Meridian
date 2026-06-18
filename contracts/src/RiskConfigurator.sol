@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {RiskParams} from "./libraries/RiskParams.sol";
+import {IRiskConfigurator} from "./interfaces/IRiskConfigurator.sol";
 
 /// @title RiskConfigurator
 /// @notice On-chain store of risk parameters consumed by the credit system: per-collateral
@@ -10,7 +11,7 @@ import {RiskParams} from "./libraries/RiskParams.sol";
 ///         model curve. Every setter validates against the RiskParams invariants.
 /// @dev Owned by governance (a timelock in production), so parameter changes are deliberate
 ///      and auditable.
-contract RiskConfigurator is Ownable {
+contract RiskConfigurator is Ownable, IRiskConfigurator {
     struct CollateralConfig {
         uint256 haircutBps;
         uint256 maxLeverageBps;
@@ -58,20 +59,20 @@ contract RiskConfigurator is Ownable {
     }
 
     /// @notice Haircut for a supported collateral, in basis points.
-    function haircutBps(address token) external view returns (uint256) {
+    function haircutBps(address token) external view override returns (uint256) {
         CollateralConfig memory config = collateral[token];
         if (!config.supported) revert UnsupportedCollateral();
         return config.haircutBps;
     }
 
     /// @notice Maximum leverage for a supported collateral, in basis points.
-    function maxLeverageBps(address token) external view returns (uint256) {
+    function maxLeverageBps(address token) external view override returns (uint256) {
         CollateralConfig memory config = collateral[token];
         if (!config.supported) revert UnsupportedCollateral();
         return config.maxLeverageBps;
     }
 
-    function isSupported(address token) external view returns (bool) {
+    function isSupported(address token) external view override returns (bool) {
         return collateral[token].supported;
     }
 }
