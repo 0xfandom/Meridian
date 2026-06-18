@@ -62,3 +62,30 @@ jobs:
 
       - name: Solhint
         run: pnpm lint:sol
+
+  indexer:
+    name: Indexer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm --filter @meridian/indexer typecheck
+
+      - name: Test
+        run: pnpm --filter @meridian/indexer test
+
+      - name: Build
+        run: pnpm --filter @meridian/indexer build
