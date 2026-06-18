@@ -63,9 +63,13 @@ jobs:
       - name: Solhint
         run: pnpm lint:sol
 
-  indexer:
-    name: Indexer
+  backend:
+    name: Backend (${{ matrix.package }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [indexer, api]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -82,10 +86,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        run: pnpm --filter @meridian/indexer typecheck
+        run: pnpm --filter @meridian/${{ matrix.package }} typecheck
 
       - name: Test
-        run: pnpm --filter @meridian/indexer test
+        run: pnpm --filter @meridian/${{ matrix.package }} test
 
       - name: Build
-        run: pnpm --filter @meridian/indexer build
+        run: pnpm --filter @meridian/${{ matrix.package }} build
