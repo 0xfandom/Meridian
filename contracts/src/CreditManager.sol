@@ -14,6 +14,7 @@ import {IPriceOracle} from "./interfaces/IPriceOracle.sol";
 import {IRiskConfigurator} from "./interfaces/IRiskConfigurator.sol";
 import {IGuardian} from "./interfaces/IGuardian.sol";
 import {IWhitelistRegistry} from "./interfaces/IWhitelistRegistry.sol";
+import {ILiquidationTarget} from "./interfaces/ILiquidationTarget.sol";
 import {MarginAccount} from "./MarginAccount.sol";
 
 /// @title CreditManager
@@ -24,7 +25,7 @@ import {MarginAccount} from "./MarginAccount.sol";
 ///      cumulative index gives the live debt; the difference from the outstanding face
 ///      principal is the accrued interest. The pool remains the authority for lender-side
 ///      interest, so interest paid on repayment is clamped to what the pool reports as owed.
-contract CreditManager is Ownable, ReentrancyGuard {
+contract CreditManager is Ownable, ReentrancyGuard, ILiquidationTarget {
     using SafeERC20 for IERC20;
 
     uint256 internal constant WAD = 1e18;
@@ -43,6 +44,7 @@ contract CreditManager is Ownable, ReentrancyGuard {
     IRiskConfigurator public riskConfigurator;
     IGuardian public guardian;
     IWhitelistRegistry public whitelistRegistry;
+    address public liquidationModule;
     address public facade;
 
     uint256 public borrowIndex = RAY;
@@ -70,14 +72,18 @@ contract CreditManager is Ownable, ReentrancyGuard {
     event WithdrawCollateral(address indexed account, address indexed to, uint256 amount);
     event IncreaseDebt(address indexed account, uint256 amount);
     event DecreaseDebt(address indexed account, uint256 principalRepaid, uint256 interestPaid);
+    event Liquidate(address indexed account, address indexed liquidator, uint256 debtRepaid, uint256 collateralSeized);
     event OracleSet(address indexed oracle);
     event RiskConfiguratorSet(address indexed riskConfigurator);
     event GuardianSet(address indexed guardian);
     event WhitelistRegistrySet(address indexed whitelistRegistry);
+    event LiquidationModuleSet(address indexed liquidationModule);
     event FacadeSet(address indexed facade);
 
     error ZeroAddress();
     error NotAuthorized();
+    error NotLiquidator();
+    error NotLiquidatable();
     error UnknownAccount();
     error AccountNotEmpty();
     error Undercollateralized();
@@ -144,6 +150,14 @@ contract CreditManager is Ownable, ReentrancyGuard {
     function setWhitelistRegistry(IWhitelistRegistry whitelistRegistry_) external onlyOwner {
         whitelistRegistry = whitelistRegistry_;
         emit WhitelistRegistrySet(address(whitelistRegistry_));
+    }
+
+    /// @notice Sets the module permitted to trigger liquidations. Until set, liquidation is
+    ///         disabled, since no caller can satisfy the liquidation-module check.
+    function setLiquidationModule(address liquidationModule_) external onlyOwner {
+        if (liquidationModule_ == address(0)) revert ZeroAddress();
+        liquidationModule = liquidationModule_;
+        emit LiquidationModuleSet(liquidationModule_);
     }
 
     function setFacade(address facade_) external onlyOwner {
@@ -215,6 +229,59 @@ contract CreditManager is Ownable, ReentrancyGuard {
 
         a.open = false;
         emit CloseAccount(account, owner_);
+    }
+
+    /// @notice Liquidates an underwater account. Callable only by the liquidation module, which
+    ///         gates on keeper authority; the manager independently re-checks the health floor.
+    /// @dev The pool is always made whole: the account's own underlying repays its debt first and
+    ///      the keeper funds any shortfall. In exchange the keeper seizes all collateral, whose
+    ///      surplus over the debt is bounded by the collateral haircut and forms the liquidation
+    ///      incentive. Any underlying left in the account after repayment returns to the owner.
+    ///      Not pausable: liquidation must remain available during an incident.
+    function liquidate(address account, address liquidator) external override nonReentrant {
+        if (msg.sender != liquidationModule) revert NotLiquidator();
+        Account storage a = accounts[account];
+        if (!a.open) revert UnknownAccount();
+        _accrueIndex();
+
+        if (calcHealthFactor(account) >= HEALTH_FACTOR_ONE) revert NotLiquidatable();
+
+        uint256 debt = _debt(a);
+        uint256 principal = a.facePrincipal;
+
+        if (debt > 0) {
+            uint256 fromAccount = Math.min(underlying.balanceOf(account), debt);
+            if (fromAccount > 0) {
+                MarginAccount(account).transferToken(address(underlying), address(this), fromAccount);
+            }
+            uint256 shortfall = debt - fromAccount;
+            if (shortfall > 0) {
+                underlying.safeTransferFrom(liquidator, address(this), shortfall);
+            }
+
+            uint256 interest = debt - principal;
+            uint256 poolInterest = Math.min(interest, pool.calcAccruedInterest());
+            underlying.forceApprove(address(pool), principal + poolInterest);
+            pool.repay(principal, poolInterest);
+        }
+
+        a.facePrincipal = 0;
+        a.scaledDebt = 0;
+        a.open = false;
+
+        address owner_ = a.owner;
+
+        uint256 collateral = collateralToken.balanceOf(account);
+        if (collateral > 0) {
+            MarginAccount(account).transferToken(address(collateralToken), liquidator, collateral);
+        }
+
+        uint256 leftover = underlying.balanceOf(account);
+        if (leftover > 0) {
+            MarginAccount(account).transferToken(address(underlying), owner_, leftover);
+        }
+
+        emit Liquidate(account, liquidator, debt, collateral);
     }
 
     // --------------------------------------------------------------------- //
@@ -308,7 +375,7 @@ contract CreditManager is Ownable, ReentrancyGuard {
     }
 
     /// @notice Health factor in WAD; 1e18 is the liquidation boundary, above is solvent.
-    function calcHealthFactor(address account) public view returns (uint256) {
+    function calcHealthFactor(address account) public view override returns (uint256) {
         uint256 debt = calcDebt(account);
         if (debt == 0) return type(uint256).max;
 
