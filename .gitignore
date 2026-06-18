@@ -14,6 +14,14 @@ contracts/broadcast/
 indexer-state.json
 *.indexer-state.json
 
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
 # Environment
 .env
 .env.*
