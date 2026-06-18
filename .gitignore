@@ -10,6 +10,10 @@ contracts/out/
 contracts/cache/
 contracts/broadcast/
 
+# Indexer runtime state snapshots
+indexer-state.json
+*.indexer-state.json
+
 # Environment
 .env
 .env.*
