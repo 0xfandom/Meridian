@@ -11,6 +11,8 @@ import {InterestRateModel} from "../src/InterestRateModel.sol";
 import {IInterestRateModel} from "../src/interfaces/IInterestRateModel.sol";
 import {IPool} from "../src/interfaces/IPool.sol";
 import {IPriceOracle} from "../src/interfaces/IPriceOracle.sol";
+import {IRiskConfigurator} from "../src/interfaces/IRiskConfigurator.sol";
+import {RiskConfigurator} from "../src/RiskConfigurator.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 
 contract PoolFactoryTest is Test {
@@ -43,12 +45,15 @@ contract CreditManagerFactoryTest is Test {
     Pool internal pool;
     MockERC20 internal collateral;
     InterestRateModel internal irm;
+    RiskConfigurator internal riskConfigurator;
 
     function setUp() public {
         MockERC20 asset = new MockERC20("USD Coin", "USDC", 6);
         irm = new InterestRateModel(0, 400, 6000, 8000);
         pool = new Pool(IERC20(address(asset)), irm, address(this), "Meridian USDC", "mUSDC");
         collateral = new MockERC20("Wrapped Ether", "WETH", 18);
+        riskConfigurator = new RiskConfigurator(address(this));
+        riskConfigurator.setCollateral(address(collateral), 1500, 50_000);
         factory = new CreditManagerFactory(address(this));
     }
 
@@ -62,7 +67,7 @@ contract CreditManagerFactoryTest is Test {
             IERC20(address(collateral)),
             irm,
             IPriceOracle(makeAddr("oracle")),
-            8500,
+            IRiskConfigurator(address(riskConfigurator)),
             address(this)
         );
         assertEq(factory.creditManagersLength(), 1);
@@ -74,7 +79,12 @@ contract CreditManagerFactoryTest is Test {
         vm.prank(makeAddr("intruder"));
         vm.expectRevert();
         factory.createCreditManager(
-            IPool(address(pool)), IERC20(address(collateral)), irm, IPriceOracle(makeAddr("o")), 8500, address(this)
+            IPool(address(pool)),
+            IERC20(address(collateral)),
+            irm,
+            IPriceOracle(makeAddr("o")),
+            IRiskConfigurator(address(riskConfigurator)),
+            address(this)
         );
     }
 }

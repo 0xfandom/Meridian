@@ -11,6 +11,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IPool} from "./interfaces/IPool.sol";
 import {IInterestRateModel} from "./interfaces/IInterestRateModel.sol";
 import {IPriceOracle} from "./interfaces/IPriceOracle.sol";
+import {IRiskConfigurator} from "./interfaces/IRiskConfigurator.sol";
 import {MarginAccount} from "./MarginAccount.sol";
 
 /// @title CreditManager
@@ -35,9 +36,9 @@ contract CreditManager is Ownable, ReentrancyGuard {
     IERC20 public immutable collateralToken;
     IInterestRateModel public immutable interestRateModel;
     address public immutable accountImplementation;
-    uint256 public immutable liquidationThresholdBps;
 
     IPriceOracle public oracle;
+    IRiskConfigurator public riskConfigurator;
     address public facade;
 
     uint256 public borrowIndex = RAY;
@@ -66,10 +67,10 @@ contract CreditManager is Ownable, ReentrancyGuard {
     event IncreaseDebt(address indexed account, uint256 amount);
     event DecreaseDebt(address indexed account, uint256 principalRepaid, uint256 interestPaid);
     event OracleSet(address indexed oracle);
+    event RiskConfiguratorSet(address indexed riskConfigurator);
     event FacadeSet(address indexed facade);
 
     error ZeroAddress();
-    error InvalidThreshold();
     error NotAuthorized();
     error UnknownAccount();
     error AccountNotEmpty();
@@ -80,24 +81,23 @@ contract CreditManager is Ownable, ReentrancyGuard {
         IERC20 collateralToken_,
         IInterestRateModel interestRateModel_,
         IPriceOracle oracle_,
+        IRiskConfigurator riskConfigurator_,
         address accountImplementation_,
-        uint256 liquidationThresholdBps_,
         address owner_
     ) Ownable(owner_) {
         if (
             address(pool_) == address(0) || address(collateralToken_) == address(0)
                 || address(interestRateModel_) == address(0) || address(oracle_) == address(0)
-                || accountImplementation_ == address(0)
+                || address(riskConfigurator_) == address(0) || accountImplementation_ == address(0)
         ) revert ZeroAddress();
-        if (liquidationThresholdBps_ == 0 || liquidationThresholdBps_ > BPS) revert InvalidThreshold();
 
         pool = pool_;
         underlying = IERC20(pool_.asset());
         collateralToken = collateralToken_;
         interestRateModel = interestRateModel_;
         oracle = oracle_;
+        riskConfigurator = riskConfigurator_;
         accountImplementation = accountImplementation_;
-        liquidationThresholdBps = liquidationThresholdBps_;
         lastIndexUpdate = block.timestamp;
     }
 
@@ -109,6 +109,12 @@ contract CreditManager is Ownable, ReentrancyGuard {
         if (address(oracle_) == address(0)) revert ZeroAddress();
         oracle = oracle_;
         emit OracleSet(address(oracle_));
+    }
+
+    function setRiskConfigurator(IRiskConfigurator riskConfigurator_) external onlyOwner {
+        if (address(riskConfigurator_) == address(0)) revert ZeroAddress();
+        riskConfigurator = riskConfigurator_;
+        emit RiskConfiguratorSet(address(riskConfigurator_));
     }
 
     function setFacade(address facade_) external onlyOwner {
@@ -256,6 +262,13 @@ contract CreditManager is Ownable, ReentrancyGuard {
         return Math.mulDiv(accounts[account].scaledDebt, _currentIndex(), RAY);
     }
 
+    /// @notice Liquidation loan-to-value for the collateral, in basis points, sourced from the
+    ///         risk configurator: the haircut's complement (BPS - haircut). Governance owns the
+    ///         haircut, so the threshold can be tuned per collateral without redeploying.
+    function liquidationThresholdBps() public view returns (uint256) {
+        return BPS - riskConfigurator.haircutBps(address(collateralToken));
+    }
+
     /// @notice Health factor in WAD; 1e18 is the liquidation boundary, above is solvent.
     function calcHealthFactor(address account) public view returns (uint256) {
         uint256 debt = calcDebt(account);
@@ -266,7 +279,7 @@ contract CreditManager is Ownable, ReentrancyGuard {
         uint256 collateralValue = Math.mulDiv(collateralBalance, oracle.getPrice(address(collateralToken)), WAD);
         uint256 assetsValue = collateralValue + underlyingBalance;
 
-        uint256 adjusted = Math.mulDiv(assetsValue, liquidationThresholdBps, BPS);
+        uint256 adjusted = Math.mulDiv(assetsValue, liquidationThresholdBps(), BPS);
         return Math.mulDiv(adjusted, WAD, debt);
     }
 

@@ -9,6 +9,7 @@ import {InterestRateModel} from "../src/InterestRateModel.sol";
 import {CreditManager} from "../src/CreditManager.sol";
 import {CreditFacade} from "../src/CreditFacade.sol";
 import {MarginAccount} from "../src/MarginAccount.sol";
+import {RiskConfigurator} from "../src/RiskConfigurator.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
 
@@ -19,6 +20,7 @@ contract CreditAccountLifecycleTest is Test {
     Pool internal pool;
     MockPriceOracle internal oracle;
     MarginAccount internal accountImpl;
+    RiskConfigurator internal riskConfigurator;
     CreditManager internal cm;
     CreditFacade internal facade;
 
@@ -27,6 +29,8 @@ contract CreditAccountLifecycleTest is Test {
 
     uint256 internal constant WETH_PRICE = 2e18; // 2 USD per WETH
     uint256 internal constant LT_BPS = 8500;
+    uint256 internal constant WETH_HAIRCUT_BPS = 1500; // 10_000 - LT_BPS
+    uint256 internal constant WETH_MAX_LEVERAGE_BPS = 50_000; // 5x
 
     function setUp() public {
         usd = new MockERC20("USD", "USD", 18);
@@ -36,7 +40,11 @@ contract CreditAccountLifecycleTest is Test {
         oracle = new MockPriceOracle();
         oracle.setPrice(address(weth), WETH_PRICE);
         accountImpl = new MarginAccount();
-        cm = new CreditManager(pool, IERC20(address(weth)), irm, oracle, address(accountImpl), LT_BPS, address(this));
+        riskConfigurator = new RiskConfigurator(address(this));
+        riskConfigurator.setCollateral(address(weth), WETH_HAIRCUT_BPS, WETH_MAX_LEVERAGE_BPS);
+        cm = new CreditManager(
+            pool, IERC20(address(weth)), irm, oracle, riskConfigurator, address(accountImpl), address(this)
+        );
         pool.setCreditManager(address(cm), true);
         facade = new CreditFacade(cm);
         cm.setFacade(address(facade));
@@ -120,6 +128,30 @@ contract CreditAccountLifecycleTest is Test {
         vm.prank(borrower);
         cm.withdrawCollateral(account, 5e18, borrower);
         assertEq(weth.balanceOf(account), 95e18);
+    }
+
+    // ----------------------- risk configurator wiring ------------------ //
+
+    function test_LiquidationThresholdSourcedFromRiskConfigurator() public view {
+        // Threshold is the haircut's complement, read live from the configurator.
+        assertEq(cm.liquidationThresholdBps(), LT_BPS);
+    }
+
+    function test_RaisingHaircutTightensHealthFactor() public {
+        address account = _open(100e18, 800e18); // HF 1.0625 at an 8500 threshold
+        assertGt(cm.calcHealthFactor(account), 1e18);
+
+        // Governance raises the WETH haircut from 1500 to 3000 (threshold 8500 -> 7000):
+        // adjusted value 1000 * 0.70 = 700 against 800 debt -> HF 0.875, now liquidatable.
+        riskConfigurator.setCollateral(address(weth), 3000, WETH_MAX_LEVERAGE_BPS);
+        assertEq(cm.liquidationThresholdBps(), 7000);
+        assertLt(cm.calcHealthFactor(account), 1e18);
+    }
+
+    function test_OnlyOwnerSetsRiskConfigurator() public {
+        vm.prank(makeAddr("intruder"));
+        vm.expectRevert();
+        cm.setRiskConfigurator(riskConfigurator);
     }
 
     // --------------------------- access control ------------------------- //

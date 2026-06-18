@@ -8,6 +8,7 @@ import {MarginAccount} from "./MarginAccount.sol";
 import {IPool} from "./interfaces/IPool.sol";
 import {IInterestRateModel} from "./interfaces/IInterestRateModel.sol";
 import {IPriceOracle} from "./interfaces/IPriceOracle.sol";
+import {IRiskConfigurator} from "./interfaces/IRiskConfigurator.sol";
 
 /// @title CreditManagerFactory
 /// @notice Deploys credit managers that share a single margin-account implementation cloned per
@@ -29,18 +30,12 @@ contract CreditManagerFactory is Ownable {
         IERC20 collateralToken,
         IInterestRateModel interestRateModel,
         IPriceOracle oracle,
-        uint256 liquidationThresholdBps,
+        IRiskConfigurator riskConfigurator,
         address managerOwner
     ) external onlyOwner returns (address creditManager) {
         creditManager = address(
             new CreditManager(
-                pool,
-                collateralToken,
-                interestRateModel,
-                oracle,
-                accountImplementation,
-                liquidationThresholdBps,
-                managerOwner
+                pool, collateralToken, interestRateModel, oracle, riskConfigurator, accountImplementation, managerOwner
             )
         );
         creditManagers.push(creditManager);
