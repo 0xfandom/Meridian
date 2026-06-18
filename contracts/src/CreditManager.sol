@@ -12,6 +12,7 @@ import {IPool} from "./interfaces/IPool.sol";
 import {IInterestRateModel} from "./interfaces/IInterestRateModel.sol";
 import {IPriceOracle} from "./interfaces/IPriceOracle.sol";
 import {IRiskConfigurator} from "./interfaces/IRiskConfigurator.sol";
+import {IGuardian} from "./interfaces/IGuardian.sol";
 import {MarginAccount} from "./MarginAccount.sol";
 
 /// @title CreditManager
@@ -39,6 +40,7 @@ contract CreditManager is Ownable, ReentrancyGuard {
 
     IPriceOracle public oracle;
     IRiskConfigurator public riskConfigurator;
+    IGuardian public guardian;
     address public facade;
 
     uint256 public borrowIndex = RAY;
@@ -68,6 +70,7 @@ contract CreditManager is Ownable, ReentrancyGuard {
     event DecreaseDebt(address indexed account, uint256 principalRepaid, uint256 interestPaid);
     event OracleSet(address indexed oracle);
     event RiskConfiguratorSet(address indexed riskConfigurator);
+    event GuardianSet(address indexed guardian);
     event FacadeSet(address indexed facade);
 
     error ZeroAddress();
@@ -75,6 +78,15 @@ contract CreditManager is Ownable, ReentrancyGuard {
     error UnknownAccount();
     error AccountNotEmpty();
     error Undercollateralized();
+
+    /// @dev Reverts when a guardian is set and the protocol is paused. Debt repayment, collateral
+    ///      top-ups, and account closure are intentionally left ungated so positions can always be
+    ///      de-risked during an incident.
+    modifier whenNotPaused() {
+        IGuardian g = guardian;
+        if (address(g) != address(0)) g.ensureNotPaused();
+        _;
+    }
 
     constructor(
         IPool pool_,
@@ -117,6 +129,12 @@ contract CreditManager is Ownable, ReentrancyGuard {
         emit RiskConfiguratorSet(address(riskConfigurator_));
     }
 
+    /// @notice Sets (or clears) the emergency pause authority. Clearing it removes the gate.
+    function setGuardian(IGuardian guardian_) external onlyOwner {
+        guardian = guardian_;
+        emit GuardianSet(address(guardian_));
+    }
+
     function setFacade(address facade_) external onlyOwner {
         if (facade_ == address(0)) revert ZeroAddress();
         facade = facade_;
@@ -131,6 +149,7 @@ contract CreditManager is Ownable, ReentrancyGuard {
     function openCreditAccount(uint256 collateralAmount, uint256 borrowAmount, address onBehalf)
         external
         nonReentrant
+        whenNotPaused
         returns (address account)
     {
         if (onBehalf == address(0)) revert ZeroAddress();
@@ -197,7 +216,7 @@ contract CreditManager is Ownable, ReentrancyGuard {
         emit AddCollateral(account, amount);
     }
 
-    function withdrawCollateral(address account, uint256 amount, address to) external nonReentrant {
+    function withdrawCollateral(address account, uint256 amount, address to) external nonReentrant whenNotPaused {
         _authorized(account);
         _accrueIndex();
         MarginAccount(account).transferToken(address(collateralToken), to, amount);
@@ -205,7 +224,7 @@ contract CreditManager is Ownable, ReentrancyGuard {
         emit WithdrawCollateral(account, to, amount);
     }
 
-    function increaseDebt(address account, uint256 amount) external nonReentrant {
+    function increaseDebt(address account, uint256 amount) external nonReentrant whenNotPaused {
         Account storage a = _authorized(account);
         _accrueIndex();
         a.facePrincipal += amount;
@@ -240,7 +259,7 @@ contract CreditManager is Ownable, ReentrancyGuard {
     /// @dev The single post-batch health check is what makes batched, leveraged actions safe:
     ///      intermediate states may be unhealthy, but the account cannot end unhealthy. Target
     ///      whitelisting (added with the adapter registry) further constrains what may be called.
-    function multicall(address account, MultiCall[] calldata calls) external nonReentrant {
+    function multicall(address account, MultiCall[] calldata calls) external nonReentrant whenNotPaused {
         _authorized(account);
         _accrueIndex();
 

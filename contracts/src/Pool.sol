@@ -11,6 +11,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {IPool} from "./interfaces/IPool.sol";
 import {IInterestRateModel} from "./interfaces/IInterestRateModel.sol";
+import {IGuardian} from "./interfaces/IGuardian.sol";
 
 /// @title Pool
 /// @notice ERC-4626 lending pool. Lenders deposit the underlying for yield-bearing shares;
@@ -30,6 +31,10 @@ contract Pool is ERC4626, Ownable, ReentrancyGuard, IPool {
     /// @notice Interest-rate model that prices utilization.
     IInterestRateModel public immutable interestRateModel;
 
+    /// @notice Emergency pause authority. When unset (address(0)) the pool is never gated;
+    ///         once set, paused state blocks deposits, withdrawals, and new borrows.
+    IGuardian public guardian;
+
     /// @notice Principal currently lent out across all credit managers.
     uint256 public totalBorrowed;
     /// @notice Timestamp interest was last folded into the stored figure.
@@ -43,6 +48,7 @@ contract Pool is ERC4626, Ownable, ReentrancyGuard, IPool {
     event Borrow(address indexed creditManager, address indexed to, uint256 amount);
     event Repay(address indexed creditManager, uint256 principal, uint256 interest);
     event CreditManagerSet(address indexed creditManager, bool enabled);
+    event GuardianSet(address indexed guardian);
 
     error ZeroAddress();
     error NotCreditManager();
@@ -52,6 +58,14 @@ contract Pool is ERC4626, Ownable, ReentrancyGuard, IPool {
 
     modifier onlyCreditManager() {
         if (!isCreditManager[msg.sender]) revert NotCreditManager();
+        _;
+    }
+
+    /// @dev Reverts when a guardian is set and the protocol is paused. Repayment is intentionally
+    ///      left ungated so borrowers can always reduce risk during an incident.
+    modifier whenNotPaused() {
+        IGuardian g = guardian;
+        if (address(g) != address(0)) g.ensureNotPaused();
         _;
     }
 
@@ -78,12 +92,18 @@ contract Pool is ERC4626, Ownable, ReentrancyGuard, IPool {
         emit CreditManagerSet(creditManager, enabled);
     }
 
+    /// @notice Sets (or clears) the emergency pause authority. Clearing it removes the gate.
+    function setGuardian(IGuardian guardian_) external onlyOwner {
+        guardian = guardian_;
+        emit GuardianSet(address(guardian_));
+    }
+
     // --------------------------------------------------------------------- //
     //                            Borrow / repay                             //
     // --------------------------------------------------------------------- //
 
     /// @inheritdoc IPool
-    function borrow(uint256 amount, address to) external onlyCreditManager nonReentrant {
+    function borrow(uint256 amount, address to) external onlyCreditManager nonReentrant whenNotPaused {
         if (to == address(0)) revert ZeroAddress();
         _accrue();
         if (amount > availableLiquidity()) revert InsufficientLiquidity();
@@ -166,7 +186,11 @@ contract Pool is ERC4626, Ownable, ReentrancyGuard, IPool {
     }
 
     /// @inheritdoc ERC4626
-    function _deposit(address caller, address receiver, uint256 assets, uint256 shares) internal override {
+    function _deposit(address caller, address receiver, uint256 assets, uint256 shares)
+        internal
+        override
+        whenNotPaused
+    {
         _accrue();
         super._deposit(caller, receiver, assets, shares);
     }
@@ -175,6 +199,7 @@ contract Pool is ERC4626, Ownable, ReentrancyGuard, IPool {
     function _withdraw(address caller, address receiver, address owner, uint256 assets, uint256 shares)
         internal
         override
+        whenNotPaused
     {
         _accrue();
         if (assets > availableLiquidity()) revert InsufficientLiquidity();

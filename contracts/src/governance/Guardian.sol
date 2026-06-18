@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IGuardian} from "../interfaces/IGuardian.sol";
 
 /// @title Guardian
 /// @notice Emergency pause authority. A fast guardian key can pause the protocol immediately,
@@ -9,9 +10,9 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 /// @dev Deliberately asymmetric: pausing must be fast (one key) to stop an active incident,
 ///      but unpausing must be deliberate (governance) so a compromised guardian cannot resume a
 ///      paused system. Protected contracts call `ensureNotPaused` as a gate.
-contract Guardian is Ownable {
+contract Guardian is Ownable, IGuardian {
     address public guardian;
-    bool public paused;
+    bool public override paused;
 
     event Paused(address indexed by);
     event Unpaused(address indexed by);
@@ -51,7 +52,7 @@ contract Guardian is Ownable {
     }
 
     /// @notice Reverts when the protocol is paused. Gate used by protected contracts.
-    function ensureNotPaused() external view {
+    function ensureNotPaused() external view override {
         if (paused) revert EnforcedPause();
     }
 }
