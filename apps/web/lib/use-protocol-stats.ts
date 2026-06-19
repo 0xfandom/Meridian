@@ -12,6 +12,7 @@ export interface ProtocolStats {
   tvl: number;
   openInterest: number;
   accounts: number;
+  utilization: number; // borrowed / deposited, 0..1
 }
 
 export function useProtocolStats(pollMs = 8000): ProtocolStats | null {
@@ -32,6 +33,7 @@ export function useProtocolStats(pollMs = 8000): ProtocolStats | null {
           tvl: Number(pool.totalDeposited) / USDC,
           openInterest: Number(pool.totalBorrowed) / USDC,
           accounts: accounts.length,
+          utilization: Number(pool.utilizationWad) / 1e18,
         });
       } catch {
         // Unreachable API: leave stats null so the caller keeps its placeholder values.
