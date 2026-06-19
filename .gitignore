@@ -10,6 +10,10 @@ contracts/out/
 contracts/cache/
 contracts/broadcast/
 
+# Generated deployment manifests (addresses written by the deploy script)
+contracts/deployments/*.json
+!contracts/deployments/.gitkeep
+
 # Indexer runtime state snapshots
 indexer-state.json
 *.indexer-state.json

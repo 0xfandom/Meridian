@@ -75,6 +75,7 @@ contract DeployScript is Script {
         deployment = _deploy(config, deployer);
         vm.stopBroadcast();
 
+        writeManifest(network, deployment, block.number);
         _log(network, deployment);
     }
 
@@ -159,6 +160,30 @@ contract DeployScript is Script {
         creditManager.setLiquidationModule(d.liquidationModule);
 
         AccessController(d.accessController).grantRole(AccessController.Role.Keeper, keeper);
+    }
+
+    /// @notice Writes deployments/<network>.json with the chain id, deploy block, and every contract
+    ///         address. This manifest is the single source of truth the off-chain services read so no
+    ///         address is ever entered by hand. The file is a generated artifact and is gitignored.
+    function writeManifest(string memory network, Deployment memory d, uint256 startBlock) public {
+        string memory obj = "meridian";
+        vm.serializeString(obj, "network", network);
+        vm.serializeUint(obj, "chainId", block.chainid);
+        vm.serializeUint(obj, "startBlock", startBlock);
+        vm.serializeAddress(obj, "usdc", d.usdc);
+        vm.serializeAddress(obj, "weth", d.weth);
+        vm.serializeAddress(obj, "oracle", d.oracle);
+        vm.serializeAddress(obj, "interestRateModel", d.interestRateModel);
+        vm.serializeAddress(obj, "pool", d.pool);
+        vm.serializeAddress(obj, "riskConfigurator", d.riskConfigurator);
+        vm.serializeAddress(obj, "accountImplementation", d.accountImplementation);
+        vm.serializeAddress(obj, "creditManager", d.creditManager);
+        vm.serializeAddress(obj, "creditFacade", d.creditFacade);
+        vm.serializeAddress(obj, "guardian", d.guardian);
+        vm.serializeAddress(obj, "whitelistRegistry", d.whitelistRegistry);
+        vm.serializeAddress(obj, "accessController", d.accessController);
+        string memory json = vm.serializeAddress(obj, "liquidationModule", d.liquidationModule);
+        vm.writeJson(json, string.concat("deployments/", network, ".json"));
     }
 
     function _readConfig(string memory network) internal view returns (Config memory config) {
