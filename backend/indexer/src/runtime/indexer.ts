@@ -1,5 +1,11 @@
 import { createPublicClient, http, type PublicClient } from "viem";
-import { creditManagerAbi, liquidationModuleAbi, poolAbi } from "../abis/meridian.js";
+import {
+  creditManagerAbi,
+  creditManagerReadAbi,
+  liquidationModuleAbi,
+  poolAbi,
+  priceOracleAbi,
+} from "../abis/meridian.js";
 import type { IndexerConfig } from "../config.js";
 import type { IndexedEvent } from "../domain/events.js";
 import { applyEvent } from "../domain/reducer.js";
@@ -26,6 +32,7 @@ export async function runIndexer(config: IndexerConfig): Promise<void> {
   const latest = await client.getBlockNumber();
   console.log(`[indexer] backfilling blocks ${start}..${latest}`);
   state = await indexRange(client, config, state, start, latest);
+  state = await enrich(client, config, state);
   store.write(state);
   console.log(
     `[indexer] caught up at block ${state.lastBlock}; tracking ${Object.keys(state.accounts).length} accounts`,
@@ -35,9 +42,59 @@ export async function runIndexer(config: IndexerConfig): Promise<void> {
     await sleep(config.pollIntervalMs);
     const tip = await client.getBlockNumber();
     const from = state.lastBlock + 1n;
-    if (tip < from) continue;
-    state = await indexRange(client, config, state, from, tip);
+    // Re-enrich every poll even with no new events, so health factors track the moving price.
+    state = tip < from ? state : await indexRange(client, config, state, from, tip);
+    state = await enrich(client, config, state);
     store.write(state);
+  }
+}
+
+/// Enriches the event-sourced state with live, price-dependent reads: the collateral mark and each
+/// open account's health factor. Best-effort — a failed read leaves the prior values in place rather
+/// than crashing the indexer. Skipped entirely when the oracle/collateral addresses are not set.
+async function enrich(
+  client: PublicClient,
+  config: IndexerConfig,
+  state: IndexerState,
+): Promise<IndexerState> {
+  if (!config.oracle || !config.collateralToken) return state;
+
+  try {
+    const price = await client.readContract({
+      address: config.oracle,
+      abi: priceOracleAbi,
+      functionName: "getPrice",
+      args: [config.collateralToken],
+    });
+
+    const open = Object.values(state.accounts).filter((a) => a.open && !a.liquidated);
+    const healths = await Promise.all(
+      open.map((a) =>
+        client
+          .readContract({
+            address: config.creditManager,
+            abi: creditManagerReadAbi,
+            functionName: "calcHealthFactor",
+            args: [a.account],
+          })
+          .then((hf) => ({ account: a.account, hf }))
+          .catch(() => ({ account: a.account, hf: undefined as bigint | undefined })),
+      ),
+    );
+    const healthByAccount = new Map(healths.map((h) => [h.account, h.hf]));
+
+    const accounts = Object.fromEntries(
+      Object.entries(state.accounts).map(([address, account]) => [
+        address,
+        account.open && !account.liquidated
+          ? { ...account, healthFactorWad: healthByAccount.get(account.account) }
+          : { ...account, healthFactorWad: undefined },
+      ]),
+    );
+
+    return { ...state, collateralPriceUsdc: price, accounts };
+  } catch {
+    return state;
   }
 }
 

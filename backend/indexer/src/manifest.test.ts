@@ -8,6 +8,8 @@ import { loadManifest } from "./manifest.js";
 const POOL = "0x00000000000000000000000000000000000000a1";
 const CREDIT_MANAGER = "0x00000000000000000000000000000000000000b2";
 const LIQUIDATION_MODULE = "0x00000000000000000000000000000000000000c3";
+const ORACLE = "0x00000000000000000000000000000000000000d4";
+const WETH = "0x00000000000000000000000000000000000000e5";
 
 function writeManifest(dir: string, body: Record<string, unknown>): string {
   const path = join(dir, "local.json");
@@ -22,6 +24,8 @@ const validBody = {
   pool: POOL,
   creditManager: CREDIT_MANAGER,
   liquidationModule: LIQUIDATION_MODULE,
+  oracle: ORACLE,
+  weth: WETH,
 };
 
 describe("deployment manifest", () => {
@@ -40,6 +44,8 @@ describe("deployment manifest", () => {
     expect(manifest.pool).toBe(POOL);
     expect(manifest.creditManager).toBe(CREDIT_MANAGER);
     expect(manifest.liquidationModule).toBe(LIQUIDATION_MODULE);
+    expect(manifest.oracle).toBe(ORACLE);
+    expect(manifest.collateralToken).toBe(WETH);
     expect(manifest.startBlock).toBe(7n);
     expect(manifest.chainId).toBe(31337);
   });

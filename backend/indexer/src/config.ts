@@ -9,6 +9,10 @@ export interface IndexerConfig {
   startBlock: bigint;
   pollIntervalMs: number;
   snapshotPath: string;
+  // Optional: when both are present the indexer enriches the snapshot with the live collateral mark
+  // and per-account health factor each poll. Absent (no manifest) -> enrichment is skipped.
+  oracle?: Address;
+  collateralToken?: Address;
 }
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -34,6 +38,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IndexerConfig 
     startBlock: resolveStartBlock(env, manifest),
     pollIntervalMs: Number(env.INDEXER_POLL_INTERVAL_MS ?? "4000"),
     snapshotPath: env.INDEXER_SNAPSHOT_PATH ?? "./indexer-state.json",
+    oracle: resolveOptionalAddress(env, "MERIDIAN_ORACLE_ADDRESS", manifest?.oracle),
+    collateralToken: resolveOptionalAddress(
+      env,
+      "MERIDIAN_COLLATERAL_ADDRESS",
+      manifest?.collateralToken,
+    ),
   };
 }
 
@@ -47,6 +57,19 @@ function resolveAddress(
     throw new Error(
       `indexer: ${key} must be set to a 20-byte hex address (env or deployment manifest)`,
     );
+  }
+  return value as Address;
+}
+
+function resolveOptionalAddress(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  fallback: Address | undefined,
+): Address | undefined {
+  const value = env[key] ?? fallback;
+  if (!value) return undefined;
+  if (!ADDRESS_RE.test(value)) {
+    throw new Error(`indexer: ${key} must be a 20-byte hex address when set`);
   }
   return value as Address;
 }

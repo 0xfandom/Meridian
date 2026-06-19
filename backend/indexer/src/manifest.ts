@@ -11,6 +11,8 @@ export interface DeploymentManifest {
   pool: Address;
   creditManager: Address;
   liquidationModule: Address;
+  oracle: Address;
+  collateralToken: Address;
 }
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -26,6 +28,8 @@ export function loadManifest(path: string): DeploymentManifest {
     pool: requireManifestAddress(raw, "pool", path),
     creditManager: requireManifestAddress(raw, "creditManager", path),
     liquidationModule: requireManifestAddress(raw, "liquidationModule", path),
+    oracle: requireManifestAddress(raw, "oracle", path),
+    collateralToken: requireManifestAddress(raw, "weth", path),
   };
 }
 
