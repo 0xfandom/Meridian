@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import type { Context } from "hono";
 import type { ApiConfig } from "./config.js";
 import { issueSession, verifySession } from "./auth/session.js";
@@ -27,6 +28,10 @@ export interface AppDeps {
 export function createApp(deps: AppDeps): Hono {
   const app = new Hono();
   const { config, source, nonces, now } = deps;
+
+  // Allow browser clients (the web app) to read the API cross-origin. Origin is configurable;
+  // defaults to "*" since the read endpoints are public and auth uses bearer tokens, not cookies.
+  app.use("*", cors({ origin: config.corsOrigin }));
 
   app.get("/health", (c) => json(c, { status: "ok", lastBlock: source.refresh().lastBlock }));
 
