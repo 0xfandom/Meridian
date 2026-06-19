@@ -13,6 +13,7 @@ import {MarginAccount} from "../src/MarginAccount.sol";
 import {Pool} from "../src/Pool.sol";
 import {RiskConfigurator} from "../src/RiskConfigurator.sol";
 import {WhitelistRegistry} from "../src/WhitelistRegistry.sol";
+import {UniswapV3Adapter} from "../src/adapters/UniswapV3Adapter.sol";
 import {Guardian} from "../src/governance/Guardian.sol";
 import {RiskParams} from "../src/libraries/RiskParams.sol";
 import {IGuardian} from "../src/interfaces/IGuardian.sol";
@@ -21,9 +22,11 @@ import {ILiquidationTarget} from "../src/interfaces/ILiquidationTarget.sol";
 import {IPool} from "../src/interfaces/IPool.sol";
 import {IPriceOracle} from "../src/interfaces/IPriceOracle.sol";
 import {IRiskConfigurator} from "../src/interfaces/IRiskConfigurator.sol";
+import {IUniswapV3SwapRouter} from "../src/interfaces/IUniswapV3SwapRouter.sol";
 import {IWhitelistRegistry} from "../src/interfaces/IWhitelistRegistry.sol";
 import {MockERC20} from "../test/mocks/MockERC20.sol";
 import {MockPriceOracle} from "../test/mocks/MockPriceOracle.sol";
+import {MockSwapRouter} from "../test/mocks/MockSwapRouter.sol";
 
 /// @title DeployScript
 /// @notice Deploys the full Meridian system and applies every wiring step. The local profile
@@ -64,6 +67,8 @@ contract DeployScript is Script {
         address whitelistRegistry;
         address accessController;
         address liquidationModule;
+        address swapRouter;
+        address swapAdapter;
     }
 
     function run() external returns (Deployment memory deployment) {
@@ -127,7 +132,29 @@ contract DeployScript is Script {
             new LiquidationModule(AccessController(d.accessController), ILiquidationTarget(d.creditManager), deployer)
         );
 
+        // --- Mock DEX so the local deployment is leverage-capable (local only) ---
+        _deployLocalDex(d, config);
+
         _wire(d, config.keeper);
+    }
+
+    /// @notice Deploys a mock swap router and the Uniswap adapter, funds the router, and whitelists
+    ///         the lever path so a fresh local deployment can take on leverage exactly as the live
+    ///         system would: borrowed USDC swapped into WETH collateral through the gated multicall.
+    function _deployLocalDex(Deployment memory d, Config memory config) internal {
+        MockSwapRouter router = new MockSwapRouter();
+        // amountOut = amountIn * rateWad / 1e18; convert 6-dp USDC into 18-dp WETH at the oracle price.
+        router.setRate((1e18 * 1e18) / config.wethPriceInUsdc);
+        MockERC20(d.weth).mint(address(router), 1_000_000e18); // reserves to pay out swaps
+        d.swapRouter = address(router);
+
+        d.swapAdapter = address(new UniswapV3Adapter(IUniswapV3SwapRouter(d.swapRouter)));
+
+        WhitelistRegistry whitelist = WhitelistRegistry(d.whitelistRegistry);
+        whitelist.setTarget(d.usdc, true);
+        whitelist.setSelector(d.usdc, IERC20.approve.selector, true);
+        whitelist.setTarget(d.swapAdapter, true);
+        whitelist.setSelector(d.swapAdapter, UniswapV3Adapter.swapExactInputSingle.selector, true);
     }
 
     function _configureRisk(RiskConfigurator riskConfigurator, Config memory config, address weth) internal {
@@ -182,7 +209,9 @@ contract DeployScript is Script {
         vm.serializeAddress(obj, "guardian", d.guardian);
         vm.serializeAddress(obj, "whitelistRegistry", d.whitelistRegistry);
         vm.serializeAddress(obj, "accessController", d.accessController);
-        string memory json = vm.serializeAddress(obj, "liquidationModule", d.liquidationModule);
+        vm.serializeAddress(obj, "liquidationModule", d.liquidationModule);
+        vm.serializeAddress(obj, "swapRouter", d.swapRouter);
+        string memory json = vm.serializeAddress(obj, "swapAdapter", d.swapAdapter);
         vm.writeJson(json, string.concat("deployments/", network, ".json"));
     }
 
@@ -218,5 +247,7 @@ contract DeployScript is Script {
         console2.log("  WhitelistRegistry   ", d.whitelistRegistry);
         console2.log("  AccessController    ", d.accessController);
         console2.log("  LiquidationModule   ", d.liquidationModule);
+        console2.log("  SwapRouter (mock)   ", d.swapRouter);
+        console2.log("  SwapAdapter         ", d.swapAdapter);
     }
 }
