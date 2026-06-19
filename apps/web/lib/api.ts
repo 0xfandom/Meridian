@@ -20,6 +20,7 @@ export interface AccountView {
   collateralDeposited: string;
   open: boolean;
   liquidated: boolean;
+  healthFactorWad?: string; // present for open accounts when the indexer enriches the snapshot
 }
 
 async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
