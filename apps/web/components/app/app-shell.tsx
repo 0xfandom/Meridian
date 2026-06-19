@@ -40,6 +40,8 @@ import {
 } from "./gate-viz";
 import { AssetLogo } from "./asset-logos";
 import { useProtocolStats } from "@/lib/use-protocol-stats";
+import { useAccounts } from "@/lib/use-accounts";
+import type { AccountView } from "@/lib/api";
 
 const MOCK_ADDRESS = "0x1f3b…c92a";
 const NETWORK = "Ethereum";
@@ -1470,6 +1472,11 @@ function RiskWidget({ d }: { d: Derived }) {
 
 /* ---------- positions table ---------- */
 function Positions() {
+  // When the backend is reachable, show the real credit-account book (with live health); offline,
+  // fall back to the placeholder perp positions so the design still renders.
+  const live = useAccounts();
+  if (live) return <AccountsTable accounts={live} />;
+
   const total = POSITIONS.reduce((s, p) => s + p.pnl, 0);
   return (
     <div className="mt-3 overflow-hidden rounded-2xl border border-hair/70 bg-white shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
@@ -1509,6 +1516,78 @@ function Positions() {
           <div className="text-right font-mono text-[13px] text-ink">{p.liq.toLocaleString()}</div>
           <div className="text-right font-mono text-[14px] font-semibold text-[#0f9d6e]">
             +{fmtUSD(p.pnl)}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ---------- live credit-account book ---------- */
+function AccountsTable({ accounts }: { accounts: AccountView[] }) {
+  const open = accounts.filter((a) => a.open && !a.liquidated).length;
+  const fmtHealth = (wad?: string) => (wad ? (Number(wad) / 1e18).toFixed(2) : "—");
+  const healthTone = (wad?: string) => {
+    if (!wad) return "text-ink-f";
+    const hf = Number(wad) / 1e18;
+    if (hf < 1) return "text-red-d";
+    if (hf < 1.2) return "text-[#b45309]";
+    return "text-[#0f9d6e]";
+  };
+  const statusLabel = (a: AccountView) =>
+    a.liquidated ? "Liquidated" : a.open ? "Open" : "Closed";
+  const statusClass = (a: AccountView) =>
+    a.liquidated
+      ? "bg-red-bg text-red-d"
+      : a.open
+        ? "bg-[#e7f6ef] text-[#0f9d6e]"
+        : "bg-hair text-ink-m";
+
+  return (
+    <div className="mt-3 overflow-hidden rounded-2xl border border-hair/70 bg-white shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
+      <div className="flex items-center justify-between border-b border-hair px-5 py-4">
+        <h2 className="font-sans text-[16px] font-bold tracking-tight text-ink">Credit accounts</h2>
+        <span className="font-mono text-[12px] text-ink-m">
+          {accounts.length} total · {open} open
+        </span>
+      </div>
+      <div className="hidden grid-cols-[1.4fr_1fr_1fr_0.8fr_0.9fr] gap-3 px-5 py-2.5 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-f md:grid">
+        <span>Account</span>
+        <span className="text-right">Collateral</span>
+        <span className="text-right">Debt</span>
+        <span className="text-right">Health</span>
+        <span className="text-right">Status</span>
+      </div>
+      {accounts.length === 0 && (
+        <div className="px-5 py-6 text-center font-mono text-[12px] text-ink-m">
+          No credit accounts yet.
+        </div>
+      )}
+      {accounts.map((a) => (
+        <div
+          key={a.account}
+          className="grid grid-cols-2 items-center gap-3 border-t border-hair-lt px-5 py-4 md:grid-cols-[1.4fr_1fr_1fr_0.8fr_0.9fr]"
+        >
+          <div className="font-mono text-[13px] font-semibold text-ink">
+            {a.account.slice(0, 6)}…{a.account.slice(-4)}
+          </div>
+          <div className="text-right font-mono text-[13px] text-ink">
+            {(Number(a.collateralDeposited) / 1e18).toFixed(2)} WETH
+          </div>
+          <div className="text-right font-mono text-[13px] text-ink">
+            {fmtUSD(Number(a.facePrincipal) / 1e6)}
+          </div>
+          <div
+            className={`text-right font-mono text-[14px] font-semibold ${healthTone(a.healthFactorWad)}`}
+          >
+            {fmtHealth(a.healthFactorWad)}
+          </div>
+          <div className="text-right">
+            <span
+              className={`rounded-full px-2.5 py-1 font-mono text-[11px] font-semibold ${statusClass(a)}`}
+            >
+              {statusLabel(a)}
+            </span>
           </div>
         </div>
       ))}
