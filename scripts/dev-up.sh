@@ -21,6 +21,15 @@ set -m
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# --- Flags -----------------------------------------------------------------------------
+SEED=false
+for arg in "$@"; do
+  case "$arg" in
+    --seed) SEED=true ;;
+    *) echo "unknown flag: $arg (supported: --seed)" >&2; exit 1 ;;
+  esac
+done
+
 # Load .env for overrides if present (same idiom as scripts/dev-fork.sh).
 if [ -f "$ROOT/.env" ]; then
   set -a
@@ -119,6 +128,19 @@ test -f "$MANIFEST" || {
 }
 echo "       manifest: $MANIFEST"
 
+# --- 2b. Optionally seed a demo book ---------------------------------------------------
+if [ "$SEED" = true ]; then
+  echo "[2b] seeding a demo book (LP liquidity + healthy/warning/margin-call accounts)..."
+  (
+    cd "$ROOT/contracts" &&
+      forge script script/Seed.s.sol:SeedScript --rpc-url "$RPC_URL" --broadcast >"$DEV_DIR/seed.log" 2>&1
+  ) || {
+    echo "seed failed; see $DEV_DIR/seed.log" >&2
+    exit 1
+  }
+  echo "       seeded; details in $DEV_DIR/seed.log"
+fi
+
 # --- 3. Shared service environment (addresses come from the manifest) ------------------
 export MERIDIAN_DEPLOYMENT="$MANIFEST"
 export INDEXER_RPC_URL="$RPC_URL"
@@ -169,5 +191,16 @@ Meridian dev stack is up.
 
 Press Ctrl-C to tear everything down.
 EOF
+
+if [ "$SEED" = true ]; then
+  cat <<EOF
+Demo book seeded. Inspect it:
+  curl -s http://127.0.0.1:3001/pools | jq
+  curl -s http://127.0.0.1:3001/accounts | jq
+  curl -s http://127.0.0.1:3002/alerts | jq
+Drive a liquidation cascade (the keeper acts on it when started with KEEPER_DRY_RUN=false):
+  (cd contracts && forge script script/Seed.s.sol:SeedScript --sig "crash()" --rpc-url $RPC_URL --broadcast)
+EOF
+fi
 
 wait
