@@ -1,0 +1,13 @@
+{
+  "keeper": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+  "wethPriceInUsdc": 2000000000,
+  "warningBps": 12000,
+  "marginCallBps": 11000,
+  "liquidationBps": 10000,
+  "baseRateBps": 0,
+  "slope1Bps": 400,
+  "slope2Bps": 6000,
+  "optimalUtilizationBps": 8000,
+  "wethHaircutBps": 1000,
+  "wethMaxLeverageBps": 50000
+}
