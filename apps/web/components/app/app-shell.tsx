@@ -1608,6 +1608,16 @@ function EarnView() {
   const [usdc, setUsdc] = useState(INITIAL_USDC);
   const [act, setAct] = useState<EarnAction>(null);
 
+  // The live USDC pool maps to the Senior tranche (first claim on repayments). When the backend is
+  // reachable, show its real size and utilization; APY and the Junior tranche stay placeholders.
+  const live = useProtocolStats();
+  useEffect(() => {
+    if (!live) return;
+    setPools((prev) =>
+      prev.map((p) => (p.tier === "Senior" ? { ...p, tvl: live.tvl, util: live.utilization } : p)),
+    );
+  }, [live]);
+
   const e = useMemo(() => {
     const supplied = pools.reduce((s, p) => s + p.supplied, 0);
     const blendedApy =
