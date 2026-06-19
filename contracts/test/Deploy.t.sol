@@ -50,4 +50,23 @@ contract DeployScriptTest is Test {
     function test_KeeperRoleGranted() public view {
         assertTrue(AccessController(d.accessController).isKeeper(LOCAL_KEEPER));
     }
+
+    /// @notice The manifest round-trips: writing it and parsing it back yields the same addresses and
+    ///         chain metadata the services need to start with no manual address entry.
+    function test_ManifestRoundTrips() public {
+        DeployScript script = new DeployScript();
+        string memory network = "manifest-test";
+        string memory path = string.concat("deployments/", network, ".json");
+
+        script.writeManifest(network, d, 1234);
+
+        string memory json = vm.readFile(path);
+        assertEq(vm.parseJsonUint(json, ".chainId"), block.chainid);
+        assertEq(vm.parseJsonUint(json, ".startBlock"), 1234);
+        assertEq(vm.parseJsonAddress(json, ".pool"), d.pool);
+        assertEq(vm.parseJsonAddress(json, ".creditManager"), d.creditManager);
+        assertEq(vm.parseJsonAddress(json, ".liquidationModule"), d.liquidationModule);
+
+        vm.removeFile(path);
+    }
 }

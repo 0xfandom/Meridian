@@ -13,6 +13,7 @@ import (
 	"meridian/keeper/internal/chain"
 	"meridian/keeper/internal/health"
 	"meridian/keeper/internal/keeper"
+	"meridian/keeper/internal/manifest"
 	"meridian/keeper/internal/watchdog"
 )
 
@@ -24,6 +25,21 @@ func main() {
 	module := os.Getenv("MERIDIAN_LIQUIDATION_MODULE_ADDRESS")
 	creditManager := os.Getenv("MERIDIAN_CREDIT_MANAGER_ADDRESS")
 	snapshot := envDefault("INDEXER_SNAPSHOT_PATH", "./indexer-state.json")
+
+	// Fall back to the deployment manifest for any address not set explicitly; env vars win.
+	if path := os.Getenv("MERIDIAN_DEPLOYMENT"); path != "" {
+		m, err := manifest.Load(path)
+		if err != nil {
+			logger.Error("failed to load deployment manifest", "err", err)
+			os.Exit(1)
+		}
+		if module == "" {
+			module = m.LiquidationModule
+		}
+		if creditManager == "" {
+			creditManager = m.CreditManager
+		}
+	}
 
 	if rpcURL == "" || key == "" || module == "" || creditManager == "" {
 		logger.Info("keeper not configured (need KEEPER_RPC_URL, KEEPER_PRIVATE_KEY, " +
