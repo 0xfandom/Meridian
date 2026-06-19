@@ -18,6 +18,12 @@ contracts/deployments/*.json
 indexer-state.json
 *.indexer-state.json
 
+# Local dev stack working directory (logs, snapshots) written by scripts/dev-up.sh
+.dev/
+
+# Margin engine local virtualenv
+backend/margin-engine/.venv/
+
 # Python
 .venv/
 __pycache__/
