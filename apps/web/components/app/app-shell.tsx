@@ -39,6 +39,7 @@ import {
   BgIcons,
 } from "./gate-viz";
 import { AssetLogo } from "./asset-logos";
+import { useProtocolStats } from "@/lib/use-protocol-stats";
 
 const MOCK_ADDRESS = "0x1f3b…c92a";
 const NETWORK = "Ethereum";
@@ -398,6 +399,22 @@ function ConnectGate({ onOpen }: { onOpen: () => void }) {
   const [verb, setVerb] = useState(0);
   const [par, setPar] = useState({ x: 0, y: 0 }); // pointer offset, -0.5..0.5
   const [stats, setStats] = useState(() => GATE_STATS.map((s) => ({ ...s, value: s.base })));
+
+  // Live protocol stats from the backend API. When reachable, the TVL, open-interest, and
+  // margin-account cards show real numbers; offline they keep their placeholder values.
+  const live = useProtocolStats();
+  useEffect(() => {
+    if (!live) return;
+    const liveBase = (s: GateStat): number =>
+      s.k === "tvl"
+        ? live.tvl
+        : s.k === "oi"
+          ? live.openInterest
+          : s.k === "acct"
+            ? live.accounts
+            : s.base;
+    setStats(GATE_STATS.map((s) => ({ ...s, base: liveBase(s), value: liveBase(s) })));
+  }, [live]);
 
   // cycle the headline verb
   useEffect(() => {

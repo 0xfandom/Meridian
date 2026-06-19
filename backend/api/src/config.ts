@@ -2,6 +2,7 @@ export interface ApiConfig {
   port: number;
   snapshotPath: string;
   riskParamsPath: string;
+  corsOrigin: string;
   siweDomain: string;
   siweChainId: number;
   sessionSecret: string;
@@ -17,6 +18,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     port: Number(env.API_PORT ?? "3001"),
     snapshotPath: env.INDEXER_SNAPSHOT_PATH ?? "./indexer-state.json",
     riskParamsPath: env.API_RISK_PARAMS_PATH ?? "../../contracts/config/risk-params.json",
+    corsOrigin: env.API_CORS_ORIGIN ?? "*",
     siweDomain: env.API_SIWE_DOMAIN ?? "localhost:3001",
     siweChainId: Number(env.API_SIWE_CHAIN_ID ?? "1"),
     sessionSecret: env.API_SESSION_SECRET ?? "dev-insecure-secret-change-me",
