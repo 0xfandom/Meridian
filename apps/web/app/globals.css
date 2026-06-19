@@ -1,0 +1,167 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  height: 100%;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: #ffffff;
+  color: #0b1020;
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: #e11d2a;
+  color: #ffffff;
+}
+
+/* brutalist graph-paper grid */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, #eeeeee 1px, transparent 1px),
+    linear-gradient(to bottom, #eeeeee 1px, transparent 1px);
+  background-size: 30px 30px;
+}
+.bg-grid-fade {
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, transparent 78%);
+  mask-image: linear-gradient(180deg, #000 0%, transparent 78%);
+}
+
+/* connect-gate venue marquee — slides one full list width then loops */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* connect CTA — rests, then a small double-bounce every cycle */
+@keyframes ctaBounce {
+  0%, 70%, 100% { transform: translateY(0); }
+  78% { transform: translateY(-7px); }
+  86% { transform: translateY(0); }
+  92% { transform: translateY(-3px); }
+  96% { transform: translateY(0); }
+}
+
+/* connect-gate terminal panels — slow, small-amplitude drift */
+@keyframes gfloat1 {
+  0% { transform: translate(0, 0); }
+  50% { transform: translate(7px, -15px); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes gfloat2 {
+  0% { transform: translate(0, 0); }
+  50% { transform: translate(-9px, 13px); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes gfloat3 {
+  0% { transform: translate(0, 0); }
+  50% { transform: translate(11px, 9px); }
+  100% { transform: translate(0, 0); }
+}
+
+/* hero objects — gentle local bob, stay where they are placed */
+@keyframes fc1 {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(26px, -30px); }
+  50% { transform: translate(38px, 18px); }
+  75% { transform: translate(-18px, 34px); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes fc2 {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(-30px, 22px); }
+  50% { transform: translate(-14px, 42px); }
+  75% { transform: translate(30px, 26px); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes fc3 {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(34px, -22px); }
+  50% { transform: translate(-26px, -18px); }
+  75% { transform: translate(-34px, 22px); }
+  100% { transform: translate(0, 0); }
+}
+
+/* value dot travelling along the flow track (linear so node sync is exact) */
+@keyframes trackDot {
+  0% {
+    left: 0%;
+    opacity: 0;
+  }
+  6% {
+    opacity: 1;
+  }
+  94% {
+    opacity: 1;
+  }
+  100% {
+    left: 100%;
+    opacity: 0;
+  }
+}
+
+/* gravity hop as the dot arrives — fast launch, hang at apex, accelerating
+   fall; leans left in the air. Right cluster, 6s cycle, linear timing so the
+   keyframe spacing IS the physics. */
+@keyframes pop1 {
+  0%, 56% { transform: translateY(0) rotate(0deg); }
+  58% { transform: translateY(-30px) rotate(-4deg); }
+  60% { transform: translateY(-48px) rotate(-7deg); }
+  62% { transform: translateY(-58px) rotate(-9deg); }
+  64% { transform: translateY(-62px) rotate(-10deg); }
+  66% { transform: translateY(-62px) rotate(-10deg); }
+  68% { transform: translateY(-57px) rotate(-9deg); }
+  70% { transform: translateY(-46px) rotate(-7deg); }
+  72% { transform: translateY(-28px) rotate(-4deg); }
+  74%, 100% { transform: translateY(0) rotate(0deg); }
+}
+@keyframes pop2 {
+  0%, 70% { transform: translateY(0) rotate(0deg); }
+  72% { transform: translateY(-30px) rotate(-4deg); }
+  74% { transform: translateY(-48px) rotate(-7deg); }
+  76% { transform: translateY(-58px) rotate(-9deg); }
+  78% { transform: translateY(-62px) rotate(-10deg); }
+  80% { transform: translateY(-62px) rotate(-10deg); }
+  82% { transform: translateY(-57px) rotate(-9deg); }
+  84% { transform: translateY(-46px) rotate(-7deg); }
+  86% { transform: translateY(-28px) rotate(-4deg); }
+  88%, 100% { transform: translateY(0) rotate(0deg); }
+}
+@keyframes pop3 {
+  0%, 84% { transform: translateY(0) rotate(0deg); }
+  86% { transform: translateY(-30px) rotate(-4deg); }
+  88% { transform: translateY(-48px) rotate(-7deg); }
+  90% { transform: translateY(-58px) rotate(-9deg); }
+  92% { transform: translateY(-62px) rotate(-10deg); }
+  94% { transform: translateY(-58px) rotate(-9deg); }
+  96% { transform: translateY(-44px) rotate(-6deg); }
+  98% { transform: translateY(-24px) rotate(-3deg); }
+  100% { transform: translateY(0) rotate(0deg); }
+}
+
+/* marker glow — peaks the instant the travelling dot arrives (node x = 58/72/86%) */
+@keyframes glow1 {
+  0%, 53% { box-shadow: 0 8px 16px -4px rgba(10,10,10,0.5), 0 0 0 0 rgba(255,255,255,0); transform: scale(1); }
+  58% { box-shadow: 0 8px 16px -4px rgba(10,10,10,0.5), 0 0 28px 9px rgba(255,255,255,0.7); transform: scale(1.45); }
+  66%, 100% { box-shadow: 0 8px 16px -4px rgba(10,10,10,0.5), 0 0 0 0 rgba(255,255,255,0); transform: scale(1); }
+}
+@keyframes glow2 {
+  0%, 67% { box-shadow: 0 8px 16px -4px rgba(10,10,10,0.5), 0 0 0 0 rgba(255,255,255,0); transform: scale(1); }
+  72% { box-shadow: 0 8px 16px -4px rgba(10,10,10,0.5), 0 0 28px 9px rgba(255,255,255,0.7); transform: scale(1.45); }
+  80%, 100% { box-shadow: 0 8px 16px -4px rgba(10,10,10,0.5), 0 0 0 0 rgba(255,255,255,0); transform: scale(1); }
+}
+@keyframes glow3 {
+  0%, 81% { box-shadow: 0 8px 16px -4px rgba(10,10,10,0.5), 0 0 0 0 rgba(255,255,255,0); transform: scale(1); }
+  86% { box-shadow: 0 8px 16px -4px rgba(10,10,10,0.5), 0 0 28px 9px rgba(255,255,255,0.7); transform: scale(1.45); }
+  94%, 100% { box-shadow: 0 8px 16px -4px rgba(10,10,10,0.5), 0 0 0 0 rgba(255,255,255,0); transform: scale(1); }
+}

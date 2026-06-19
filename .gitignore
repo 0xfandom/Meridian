@@ -5,6 +5,10 @@ dist/
 *.log
 .pnpm-store/
 
+# Next.js
+.next/
+*.tsbuildinfo
+
 # Foundry
 contracts/out/
 contracts/cache/
