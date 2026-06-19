@@ -51,7 +51,10 @@ describe("deployment manifest", () => {
 
   it("feeds the indexer config when MERIDIAN_DEPLOYMENT is set", () => {
     const path = writeManifest(dir, validBody);
-    const config = loadConfig({ INDEXER_RPC_URL: "http://localhost:8545", MERIDIAN_DEPLOYMENT: path });
+    const config = loadConfig({
+      INDEXER_RPC_URL: "http://localhost:8545",
+      MERIDIAN_DEPLOYMENT: path,
+    });
     expect(config).not.toBeNull();
     expect(config?.pool).toBe(POOL);
     expect(config?.creditManager).toBe(CREDIT_MANAGER);

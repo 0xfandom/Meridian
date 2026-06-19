@@ -26,17 +26,27 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IndexerConfig 
     rpcUrl,
     pool: resolveAddress(env, "MERIDIAN_POOL_ADDRESS", manifest?.pool),
     creditManager: resolveAddress(env, "MERIDIAN_CREDIT_MANAGER_ADDRESS", manifest?.creditManager),
-    liquidationModule: resolveAddress(env, "MERIDIAN_LIQUIDATION_MODULE_ADDRESS", manifest?.liquidationModule),
+    liquidationModule: resolveAddress(
+      env,
+      "MERIDIAN_LIQUIDATION_MODULE_ADDRESS",
+      manifest?.liquidationModule,
+    ),
     startBlock: resolveStartBlock(env, manifest),
     pollIntervalMs: Number(env.INDEXER_POLL_INTERVAL_MS ?? "4000"),
     snapshotPath: env.INDEXER_SNAPSHOT_PATH ?? "./indexer-state.json",
   };
 }
 
-function resolveAddress(env: NodeJS.ProcessEnv, key: string, fallback: Address | undefined): Address {
+function resolveAddress(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  fallback: Address | undefined,
+): Address {
   const value = env[key] ?? fallback;
   if (!value || !ADDRESS_RE.test(value)) {
-    throw new Error(`indexer: ${key} must be set to a 20-byte hex address (env or deployment manifest)`);
+    throw new Error(
+      `indexer: ${key} must be set to a 20-byte hex address (env or deployment manifest)`,
+    );
   }
   return value as Address;
 }
