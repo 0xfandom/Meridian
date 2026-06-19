@@ -7,6 +7,7 @@ export interface PoolView {
   totalBorrowed: bigint;
   cumulativeInterestRepaid: bigint;
   utilizationWad: bigint;
+  collateralPriceUsdc: bigint;
   lastBlock: bigint;
 }
 
@@ -17,6 +18,7 @@ export function poolView(state: ProtocolState): PoolView {
     totalBorrowed,
     cumulativeInterestRepaid,
     utilizationWad: totalDeposited === 0n ? 0n : (totalBorrowed * WAD) / totalDeposited,
+    collateralPriceUsdc: state.collateralPriceUsdc ?? 0n,
     lastBlock: state.lastBlock,
   };
 }

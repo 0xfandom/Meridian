@@ -23,3 +23,11 @@ export const creditManagerAbi = parseAbi([
 export const liquidationModuleAbi = parseAbi([
   "event Liquidated(address indexed account, address indexed keeper)",
 ]);
+
+/// View functions read each poll to enrich the snapshot with live, price-dependent figures the
+/// event log alone cannot provide: the collateral mark and each account's health factor.
+export const priceOracleAbi = parseAbi(["function getPrice(address token) view returns (uint256)"]);
+
+export const creditManagerReadAbi = parseAbi([
+  "function calcHealthFactor(address account) view returns (uint256)",
+]);
