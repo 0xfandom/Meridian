@@ -1,9 +1,10 @@
 "use client";
 
-// Mock prime-brokerage app shell. Holds the (fake) wallet-connection state and
-// the mock account in React — no real chain. Disconnected → Connect gate +
-// wallet picker. Connected → top bar + Margin Account dashboard with a live
-// collateral table (Deposit / Withdraw mutate state; summary cards derive).
+// Prime-brokerage app shell. Wallet connection is real (wagmi + injected wallet on the local anvil
+// chain); a demo mode lets a wallet-less viewer explore the seeded book. Disconnected → Connect
+// gate + wallet picker. Connected → top bar + Margin Account dashboard. The collateral table and
+// summary cards are still mock state today (Deposit / Withdraw mutate React state); the live
+// on-chain write path is wired in over the following changes.
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -42,18 +43,11 @@ import { AssetLogo } from "./asset-logos";
 import { useProtocolStats } from "@/lib/use-protocol-stats";
 import { useAccounts } from "@/lib/use-accounts";
 import type { AccountView } from "@/lib/api";
+import { useWallet, shortenAddress } from "@/lib/use-wallet";
 
-const MOCK_ADDRESS = "0x1f3b…c92a";
-const NETWORK = "Ethereum";
+const DEMO_ADDRESS = "0x1f3b…c92a"; // shown in demo mode, where there is no connected wallet
+const LOCAL_NETWORK = "Local"; // anvil chain id 31337
 const LIQ_THRESHOLD = 0.85; // blended maintenance factor
-
-type WalletOpt = { name: string; sub: string; tone: string };
-const WALLETS: WalletOpt[] = [
-  { name: "MetaMask", sub: "Browser extension", tone: "#e2761b" },
-  { name: "WalletConnect", sub: "Scan with mobile", tone: "#3b99fc" },
-  { name: "Coinbase Wallet", sub: "Coinbase", tone: "#1b53e4" },
-  { name: "Rabby", sub: "Browser extension", tone: "#7084ff" },
-];
 
 type Asset = {
   sym: string;
@@ -191,24 +185,42 @@ function fmtTok(n: number) {
 }
 
 export function AppShell() {
-  const [connected, setConnected] = useState(false);
+  const {
+    isConnected,
+    address,
+    chainId,
+    wrongNetwork,
+    hasInjected,
+    isConnecting,
+    connectInjected,
+    disconnectWallet,
+  } = useWallet();
+  const [demo, setDemo] = useState(false);
   const [modal, setModal] = useState(false);
 
-  // persist the mock connection so a refresh keeps you on the dashboard
+  // A real wallet restores itself through wagmi; we only persist the demo-mode view so a refresh
+  // keeps a wallet-less viewer on the dashboard.
   useEffect(() => {
-    if (typeof window !== "undefined" && window.localStorage.getItem("mrd_connected") === "1") {
-      setConnected(true);
+    if (typeof window !== "undefined" && window.localStorage.getItem("mrd_demo") === "1") {
+      setDemo(true);
     }
   }, []);
 
-  const connect = () => {
-    setConnected(true);
+  const connected = isConnected || demo;
+
+  const connectWallet = () => {
+    connectInjected();
     setModal(false);
-    window.localStorage.setItem("mrd_connected", "1");
+  };
+  const enterDemo = () => {
+    setDemo(true);
+    setModal(false);
+    window.localStorage.setItem("mrd_demo", "1");
   };
   const disconnect = () => {
-    setConnected(false);
-    window.localStorage.removeItem("mrd_connected");
+    if (isConnected) disconnectWallet();
+    setDemo(false);
+    window.localStorage.removeItem("mrd_demo");
   };
 
   return (
@@ -227,11 +239,25 @@ export function AppShell() {
           {!connected ? (
             <ConnectGate onOpen={() => setModal(true)} />
           ) : (
-            <Dashboard onDisconnect={disconnect} />
+            <Dashboard
+              onDisconnect={disconnect}
+              address={address}
+              chainId={chainId}
+              wrongNetwork={wrongNetwork}
+              demo={!isConnected && demo}
+            />
           )}
         </motion.div>
       </AnimatePresence>
-      {modal && <WalletModal onClose={() => setModal(false)} onPick={connect} />}
+      {modal && (
+        <WalletModal
+          onClose={() => setModal(false)}
+          onConnect={connectWallet}
+          onDemo={enterDemo}
+          hasInjected={hasInjected}
+          connecting={isConnecting}
+        />
+      )}
     </main>
   );
 }
@@ -658,7 +684,19 @@ function ConnectGate({ onOpen }: { onOpen: () => void }) {
 }
 
 /* ---------- wallet picker modal ---------- */
-function WalletModal({ onClose, onPick }: { onClose: () => void; onPick: () => void }) {
+function WalletModal({
+  onClose,
+  onConnect,
+  onDemo,
+  hasInjected,
+  connecting,
+}: {
+  onClose: () => void;
+  onConnect: () => void;
+  onDemo: () => void;
+  hasInjected: boolean;
+  connecting: boolean;
+}) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-4 backdrop-blur-sm"
@@ -687,39 +725,59 @@ function WalletModal({ onClose, onPick }: { onClose: () => void; onPick: () => v
             Connect a wallet
           </h2>
           <p className="mt-1 max-w-[300px] text-[13px] leading-relaxed text-ink-m">
-            Your wallet is your identity — pick one to open your Margin Account.
+            Your wallet is your identity — connect it to open your Margin Account.
           </p>
         </div>
 
-        {/* wallet list */}
         <div className="flex flex-col gap-2">
-          {WALLETS.map((w) => (
-            <button
-              key={w.name}
-              onClick={onPick}
-              className="group flex items-center gap-3 rounded-2xl border border-hair px-4 py-3 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-ink hover:bg-off hover:shadow-[0_14px_26px_-16px_rgba(10,10,10,0.45)]"
+          {/* real injected wallet (MetaMask / Rabby / Coinbase …) */}
+          <button
+            onClick={onConnect}
+            disabled={!hasInjected || connecting}
+            className="group flex items-center gap-3 rounded-2xl border border-hair px-4 py-3 text-left transition-all duration-200 enabled:hover:-translate-y-0.5 enabled:hover:border-ink enabled:hover:bg-off enabled:hover:shadow-[0_14px_26px_-16px_rgba(10,10,10,0.45)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl font-sans text-[16px] font-bold text-white"
+              style={{ background: "#e2761b" }}
             >
-              <span
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl font-sans text-[16px] font-bold text-white"
-                style={{ background: w.tone }}
-              >
-                {w.name[0]}
+              <Wallet size={18} strokeWidth={2.3} />
+            </span>
+            <span className="flex flex-1 flex-col">
+              <span className="text-[14px] font-semibold text-ink">
+                {connecting ? "Connecting…" : "Browser Wallet"}
               </span>
-              <span className="flex flex-1 flex-col">
-                <span className="text-[14px] font-semibold text-ink">{w.name}</span>
-                <span className="text-[12px] text-ink-m">{w.sub}</span>
+              <span className="text-[12px] text-ink-m">
+                {hasInjected ? "MetaMask, Rabby, Coinbase Wallet" : "No browser wallet detected"}
               </span>
-              <ChevronRight
-                size={17}
-                className="text-ink-f transition-all group-hover:translate-x-0.5 group-hover:text-red"
-              />
-            </button>
-          ))}
+            </span>
+            <ChevronRight
+              size={17}
+              className="text-ink-f transition-all group-enabled:group-hover:translate-x-0.5 group-enabled:group-hover:text-red"
+            />
+          </button>
+
+          {/* wallet-less viewing of the seeded book */}
+          <button
+            onClick={onDemo}
+            className="group flex items-center gap-3 rounded-2xl border border-hair px-4 py-3 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-ink hover:bg-off hover:shadow-[0_14px_26px_-16px_rgba(10,10,10,0.45)]"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-ink font-sans text-[16px] font-bold text-white">
+              <Activity size={18} strokeWidth={2.3} />
+            </span>
+            <span className="flex flex-1 flex-col">
+              <span className="text-[14px] font-semibold text-ink">Demo Mode</span>
+              <span className="text-[12px] text-ink-m">Explore the seeded book — no wallet</span>
+            </span>
+            <ChevronRight
+              size={17}
+              className="text-ink-f transition-all group-hover:translate-x-0.5 group-hover:text-red"
+            />
+          </button>
         </div>
 
         <p className="mt-5 flex items-center justify-center gap-1.5 font-mono text-[11px] text-ink-f">
           <ShieldCheck size={12} className="text-red" />
-          Mock connection · no real wallet or chain
+          Local chain (anvil · 31337) · non-custodial
         </p>
       </div>
     </div>
@@ -729,7 +787,21 @@ function WalletModal({ onClose, onPick }: { onClose: () => void; onPick: () => v
 /* ---------- connected: dashboard ---------- */
 type Action = { idx: number; mode: "deposit" | "withdraw" } | null;
 
-function Dashboard({ onDisconnect }: { onDisconnect: () => void }) {
+function Dashboard({
+  onDisconnect,
+  address,
+  chainId,
+  wrongNetwork,
+  demo,
+}: {
+  onDisconnect: () => void;
+  address?: `0x${string}`;
+  chainId?: number;
+  wrongNetwork?: boolean;
+  demo?: boolean;
+}) {
+  const addressLabel = demo ? DEMO_ADDRESS : (shortenAddress(address) ?? DEMO_ADDRESS);
+  const networkLabel = demo ? "Demo" : wrongNetwork ? `Chain ${chainId}` : LOCAL_NETWORK;
   const [tab, setTab] = useState<"borrow" | "earn">("borrow");
   const [assets, setAssets] = useState<Asset[]>(INITIAL_ASSETS);
   const [borrowed, setBorrowed] = useState(INITIAL_BORROWED);
@@ -859,12 +931,14 @@ function Dashboard({ onDisconnect }: { onDisconnect: () => void }) {
         </div>
         <div className="flex items-center gap-2 justify-self-end">
           <span className="hidden items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[13px] font-medium text-ink sm:flex">
-            <span className="h-1.5 w-1.5 rounded-full bg-red" />
-            {NETWORK}
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${wrongNetwork ? "bg-[#d99100]" : "bg-red"}`}
+            />
+            {networkLabel}
           </span>
           <span className="flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 font-mono text-[13px] font-medium text-ink">
             <span className="h-1.5 w-1.5 rounded-full bg-[#19c37d]" />
-            {MOCK_ADDRESS}
+            {addressLabel}
           </span>
           <GlassButton variant="primary" onClick={onDisconnect} className="px-4 py-1.5 text-[13px]">
             Disconnect
@@ -1034,7 +1108,13 @@ function Dashboard({ onDisconnect }: { onDisconnect: () => void }) {
                 {/* account hero — card + headline balances (CloudCash-style) */}
                 <div className="mt-3 grid gap-3 lg:grid-cols-[1.05fr_1fr]">
                   {/* account overview */}
-                  <AccountPanel d={d} borrowed={borrowed} />
+                  <AccountPanel
+                    d={d}
+                    borrowed={borrowed}
+                    address={address}
+                    addressLabel={addressLabel}
+                    networkLabel={networkLabel}
+                  />
                   {/* colored balances */}
                   <div className="flex flex-col justify-center gap-5 rounded-2xl border border-hair/70 bg-white p-6 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
                     <div className="flex items-end justify-between">
@@ -1244,10 +1324,22 @@ function BigStat({
   );
 }
 
-function AccountPanel({ d, borrowed }: { d: Derived; borrowed: number }) {
+function AccountPanel({
+  d,
+  borrowed,
+  address,
+  addressLabel,
+  networkLabel,
+}: {
+  d: Derived;
+  borrowed: number;
+  address?: `0x${string}`;
+  addressLabel: string;
+  networkLabel: string;
+}) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
-    navigator.clipboard?.writeText(MOCK_ADDRESS).catch(() => {});
+    navigator.clipboard?.writeText(address ?? DEMO_ADDRESS).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   };
@@ -1263,7 +1355,7 @@ function AccountPanel({ d, borrowed }: { d: Derived; borrowed: number }) {
         <h2 className="font-sans text-[16px] font-bold tracking-tight text-ink">Account</h2>
         <span className="inline-flex items-center gap-1.5 rounded-full bg-off px-2.5 py-1 font-mono text-[11px] text-ink-m">
           <span className="h-1.5 w-1.5 rounded-full bg-[#627eea]" />
-          {NETWORK}
+          {networkLabel}
         </span>
       </div>
 
@@ -1277,7 +1369,7 @@ function AccountPanel({ d, borrowed }: { d: Derived; borrowed: number }) {
         </div>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-mono text-[15px] font-semibold text-ink">{MOCK_ADDRESS}</span>
+            <span className="font-mono text-[15px] font-semibold text-ink">{addressLabel}</span>
             <button
               onClick={copy}
               aria-label="Copy address"
