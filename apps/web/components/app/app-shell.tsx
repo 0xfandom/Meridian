@@ -44,6 +44,7 @@ import { useProtocolStats } from "@/lib/use-protocol-stats";
 import { useAccounts } from "@/lib/use-accounts";
 import type { AccountView } from "@/lib/api";
 import { useWallet, shortenAddress } from "@/lib/use-wallet";
+import { useWalletBalances } from "@/lib/use-balances";
 
 const DEMO_ADDRESS = "0x1f3b…c92a"; // shown in demo mode, where there is no connected wallet
 const LOCAL_NETWORK = "Local"; // anvil chain id 31337
@@ -1343,6 +1344,8 @@ function AccountPanel({
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   };
+  // Real on-chain balances of the connected wallet; null in demo mode or while loading.
+  const balances = useWalletBalances();
   const metrics = [
     { k: "Net APR", v: "6.2%" },
     { k: "Credit line", v: fmtUSD(d.creditLine) },
@@ -1387,6 +1390,19 @@ function AccountPanel({
           </span>
         </div>
       </div>
+
+      {/* real wallet balances — only when a live wallet is connected */}
+      {balances && (
+        <div className="flex items-center justify-between rounded-xl border border-hair/70 bg-off/50 px-4 py-2.5">
+          <span className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-f">
+            Wallet balance
+          </span>
+          <span className="font-mono text-[12.5px] font-semibold text-ink">
+            {balances.usdc.toLocaleString("en-US", { maximumFractionDigits: 2 })} USDC ·{" "}
+            {balances.weth.toLocaleString("en-US", { maximumFractionDigits: 4 })} WETH
+          </span>
+        </div>
+      )}
 
       {/* key metrics */}
       <div className="grid grid-cols-3 overflow-hidden rounded-xl border border-hair/70 bg-off/50">
