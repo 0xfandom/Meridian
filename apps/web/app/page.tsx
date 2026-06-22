@@ -2,6 +2,8 @@ import Link from "next/link";
 import { ArrowRight, ArrowUpRight, Coins, TrendingUp, Landmark, Check } from "lucide-react";
 import { HeroCards } from "@/components/hero-cards";
 import { LandingNav } from "@/components/landing-nav";
+import { CursorTrail } from "@/components/app/cursor-trail";
+import { LandingGsap } from "@/components/landing-gsap";
 
 const PILLARS = [
   {
@@ -77,11 +79,27 @@ const BLURBS = [
   },
 ];
 
-const STATS = [
-  { n: "$910M", k: "Pooled liquidity", s: "Senior & junior tranches" },
-  { n: "5×", k: "Max leverage", s: "From a single signature", accent: true },
+type Stat = {
+  n: string;
+  k: string;
+  s: string;
+  accent?: boolean;
+  to?: number;
+  prefix?: string;
+  suffix?: string;
+};
+const STATS: Stat[] = [
+  {
+    n: "$910M",
+    k: "Pooled liquidity",
+    s: "Senior & junior tranches",
+    to: 910,
+    prefix: "$",
+    suffix: "M",
+  },
+  { n: "5×", k: "Max leverage", s: "From a single signature", accent: true, to: 5, suffix: "×" },
   { n: "24/7", k: "Cross-venue", s: "DeFi and CeFi, one book" },
-  { n: "100%", k: "Self-custody", s: "Assets never leave you" },
+  { n: "100%", k: "Self-custody", s: "Assets never leave you", to: 100, suffix: "%" },
 ];
 
 const REASONS = [
@@ -229,6 +247,8 @@ const USERS = [
 export default function Page() {
   return (
     <main className="min-h-screen space-y-3 bg-ink p-3 sm:space-y-4 sm:p-4">
+      <CursorTrail />
+      <LandingGsap />
       {/* framed off-white panel */}
       <div className="relative flex min-h-[900px] flex-col overflow-hidden rounded-[26px] bg-[#f1f1ef] lg:h-[calc(100vh-2rem)] lg:min-h-[760px]">
         {/* ---- floating premium cards around the hero ---- */}
@@ -280,6 +300,7 @@ export default function Page() {
             Non-custodial prime brokerage
           </span>
           <h1
+            data-split
             className="font-sans font-extrabold tracking-tight text-ink"
             style={{ fontSize: "clamp(2.6rem, 7vw, 6.4rem)", lineHeight: 0.92 }}
           >
@@ -294,6 +315,7 @@ export default function Page() {
           <div className="mt-9 flex items-center justify-center">
             <Link
               href="/app"
+              data-magnetic
               className="pointer-events-auto flex items-center gap-2 rounded-full bg-ink px-7 py-3.5 text-[15px] font-semibold text-white transition-colors hover:bg-red"
             >
               Launch the app <ArrowUpRight size={16} strokeWidth={2.5} />
@@ -305,6 +327,7 @@ export default function Page() {
       {/* ============ PILLARS PANEL ============ */}
       <section
         id="platform"
+        data-reveal
         className="relative scroll-mt-4 overflow-hidden rounded-[26px] bg-[#f1f1ef] px-7 py-10 lg:px-10 lg:py-14"
       >
         {/* header */}
@@ -391,6 +414,7 @@ export default function Page() {
       {/* ============ OVERVIEW PANEL (what / who / why) ============ */}
       <section
         id="overview"
+        data-reveal
         className="relative scroll-mt-4 overflow-hidden rounded-[26px] bg-[#f1f1ef] px-7 py-10 lg:px-10 lg:py-14"
       >
         {/* eyebrow row */}
@@ -420,6 +444,13 @@ export default function Page() {
               <div
                 className={`font-sans font-extrabold tracking-tight ${st.accent ? "text-red" : "text-ink"}`}
                 style={{ fontSize: "clamp(2.6rem, 5vw, 4.4rem)" }}
+                {...(st.to != null
+                  ? {
+                      "data-count": String(st.to),
+                      "data-prefix": st.prefix ?? "",
+                      "data-suffix": st.suffix ?? "",
+                    }
+                  : {})}
               >
                 {st.n}
               </div>
@@ -506,6 +537,7 @@ export default function Page() {
       {/* ============ HOW IT WORKS PANEL ============ */}
       <section
         id="process"
+        data-reveal
         className="relative scroll-mt-4 overflow-hidden rounded-[26px] bg-[#f1f1ef] px-7 py-10 lg:px-10 lg:py-14"
       >
         {/* eyebrow row */}
@@ -634,6 +666,7 @@ export default function Page() {
       {/* ============ APPLY / CLOSING PANEL (dark) ============ */}
       <section
         id="apply"
+        data-reveal
         className="relative scroll-mt-4 overflow-hidden rounded-[26px] bg-ink px-7 py-10 text-white lg:px-10 lg:py-14"
       >
         {/* giant faded wordmark */}
