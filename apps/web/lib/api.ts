@@ -10,6 +10,7 @@ export interface PoolView {
   totalBorrowed: string;
   cumulativeInterestRepaid: string;
   utilizationWad: string;
+  collateralPriceUsdc: string; // oracle price of the collateral asset, 6 decimals
   lastBlock: string;
 }
 
