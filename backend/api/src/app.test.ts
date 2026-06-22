@@ -78,6 +78,40 @@ describe("API routes", () => {
     expect((await (await app.request("/liquidations")).json()) as unknown[]).toHaveLength(0);
   });
 
+  it("serves the deployment manifest when configured, 503 otherwise", async () => {
+    expect((await buildApp().request("/deployment")).status).toBe(503);
+
+    const dir = mkdtempSync(join(tmpdir(), "meridian-api-deploy-"));
+    const snapPath = join(dir, "indexer-state.json");
+    writeFileSync(snapPath, snapshotJson());
+    const manifestPath = join(dir, "local.json");
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        network: "local",
+        chainId: 31337,
+        startBlock: 0,
+        pool: "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
+      }),
+    );
+    const app = createApp({
+      config: loadConfig({
+        INDEXER_SNAPSHOT_PATH: snapPath,
+        MERIDIAN_DEPLOYMENT: manifestPath,
+        API_SESSION_SECRET: "test-secret",
+      } as NodeJS.ProcessEnv),
+      source: new SnapshotSource(snapPath),
+      nonces: new NonceStore(),
+      now: () => NOW,
+    });
+
+    const res = await app.request("/deployment");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { chainId: number; addresses: Record<string, string> };
+    expect(body.chainId).toBe(31337);
+    expect(body.addresses.pool).toBe("0x8A791620dd6260079BF849Dc5567aDC3F2FdC318");
+  });
+
   it("runs the SIWE login flow and authorizes /me", async () => {
     const app = buildApp();
 
