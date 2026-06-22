@@ -36,3 +36,9 @@ export const creditFacadeAbi = parseAbi([
   "function withdrawCollateral(address account, uint256 amount, address to)",
   "function closeCreditAccount(address account)",
 ]);
+
+// addCollateral is not on the facade; the owner calls the credit manager directly (it pulls the
+// collateral from the caller, so the manager is the approval target).
+export const creditManagerAbi = parseAbi([
+  "function addCollateral(address account, uint256 amount)",
+]);
