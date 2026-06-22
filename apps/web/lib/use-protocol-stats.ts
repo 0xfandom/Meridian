@@ -13,6 +13,7 @@ export interface ProtocolStats {
   openInterest: number;
   accounts: number;
   utilization: number; // borrowed / deposited, 0..1
+  collateralPrice: number; // oracle price of the collateral asset, in USDC
 }
 
 export function useProtocolStats(pollMs = 8000): ProtocolStats | null {
@@ -34,6 +35,7 @@ export function useProtocolStats(pollMs = 8000): ProtocolStats | null {
           openInterest: Number(pool.totalBorrowed) / USDC,
           accounts: accounts.length,
           utilization: Number(pool.utilizationWad) / 1e18,
+          collateralPrice: Number(pool.collateralPriceUsdc) / USDC,
         });
       } catch {
         // Unreachable API: leave stats null so the caller keeps its placeholder values.

@@ -26,3 +26,13 @@ export const poolAbi = parseAbi([
   "function deposit(uint256 assets, address receiver) returns (uint256 shares)",
   "function withdraw(uint256 assets, address receiver, address owner) returns (uint256 shares)",
 ]);
+
+// Borrower entry point. openCreditAccount posts collateral (pulled by the credit manager, which the
+// borrower must approve) and draws credit in one call; debt is adjusted via increase/decreaseDebt.
+export const creditFacadeAbi = parseAbi([
+  "function openCreditAccount(uint256 collateral, uint256 borrow) returns (address account)",
+  "function increaseDebt(address account, uint256 amount)",
+  "function decreaseDebt(address account, uint256 amount)",
+  "function withdrawCollateral(address account, uint256 amount, address to)",
+  "function closeCreditAccount(address account)",
+]);

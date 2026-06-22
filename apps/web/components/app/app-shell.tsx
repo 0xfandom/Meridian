@@ -47,6 +47,7 @@ import { useWallet, shortenAddress } from "@/lib/use-wallet";
 import { useWalletBalances } from "@/lib/use-balances";
 import { useLenderPosition } from "@/lib/use-lender-position";
 import { usePoolActions, type PoolActions, type TxPhase } from "@/lib/use-pool-actions";
+import { BorrowLive } from "./borrow-live";
 
 const DEMO_ADDRESS = "0x1f3b…c92a"; // shown in demo mode, where there is no connected wallet
 const LOCAL_NETWORK = "Local"; // anvil chain id 31337
@@ -960,203 +961,213 @@ function Dashboard({
             transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
           >
             {tab === "borrow" ? (
-              <section className="rounded-b-[26px] bg-[#f1f1ef] px-5 pb-7 pt-3 lg:px-9 lg:pb-9 lg:pt-4">
-                <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em] text-ink-m">
-                  <span className="relative flex h-1.5 w-1.5">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red opacity-60" />
-                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-red" />
-                  </span>
-                  Margin Account · {dateStr || "Live"}
-                </div>
-                <h1
-                  className="mt-2 font-sans font-extrabold leading-[0.95] tracking-tight text-ink"
-                  style={{ fontSize: "clamp(1.9rem, 4vw, 3rem)" }}
-                >
-                  {greeting}
-                  <span className="text-red">.</span>
-                </h1>
-                <p className="mt-1.5 text-[13.5px] text-ink-m">
-                  Your margin account at a glance — collateral, credit and risk in one book.
-                </p>
-
-                {/* allocation bars + draw-credit CTA (CloudCash-style) */}
-                <div className="mt-7 grid gap-3 lg:grid-cols-[1.6fr_1fr]">
-                  <AllocationCard assets={assets} collateral={d.collateral} />
-                  <div
-                    className="relative flex flex-col justify-between overflow-hidden rounded-2xl p-6 text-white shadow-[0_22px_46px_-20px_rgba(225,29,42,0.5)]"
-                    style={{ background: "linear-gradient(140deg,#e11d2a,#b01018)" }}
+              demo ? (
+                <section className="rounded-b-[26px] bg-[#f1f1ef] px-5 pb-7 pt-3 lg:px-9 lg:pb-9 lg:pt-4">
+                  <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em] text-ink-m">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red opacity-60" />
+                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-red" />
+                    </span>
+                    Margin Account · {dateStr || "Live"}
+                  </div>
+                  <h1
+                    className="mt-2 font-sans font-extrabold leading-[0.95] tracking-tight text-ink"
+                    style={{ fontSize: "clamp(1.9rem, 4vw, 3rem)" }}
                   >
-                    <div className="pointer-events-none absolute -right-8 -top-10 h-40 w-40 rounded-full bg-white/10" />
-                    <div className="pointer-events-none absolute -bottom-12 -left-6 h-36 w-36 rounded-full bg-white/10" />
-                    <div className="relative">
-                      <h3 className="font-sans text-[20px] font-extrabold tracking-tight">
-                        Need liquidity?
-                      </h3>
-                      <p className="mt-1.5 max-w-[260px] text-[13px] leading-relaxed text-white/80">
-                        Draw against your blended collateral — instant, non-custodial, up to{" "}
-                        {fmtPct(CREDIT_MAX_LTV)} LTV.
-                      </p>
-                    </div>
-                    <GlassButton
-                      variant="light"
-                      onClick={() => setCredit("draw")}
-                      className="mt-5 w-fit px-5 py-2.5 text-[14px] hover:-translate-y-0.5"
+                    {greeting}
+                    <span className="text-red">.</span>
+                  </h1>
+                  <p className="mt-1.5 text-[13.5px] text-ink-m">
+                    Your margin account at a glance — collateral, credit and risk in one book.
+                  </p>
+
+                  {/* allocation bars + draw-credit CTA (CloudCash-style) */}
+                  <div className="mt-7 grid gap-3 lg:grid-cols-[1.6fr_1fr]">
+                    <AllocationCard assets={assets} collateral={d.collateral} />
+                    <div
+                      className="relative flex flex-col justify-between overflow-hidden rounded-2xl p-6 text-white shadow-[0_22px_46px_-20px_rgba(225,29,42,0.5)]"
+                      style={{ background: "linear-gradient(140deg,#e11d2a,#b01018)" }}
                     >
-                      Draw credit <ArrowUpRight size={15} strokeWidth={2.5} />
-                    </GlassButton>
+                      <div className="pointer-events-none absolute -right-8 -top-10 h-40 w-40 rounded-full bg-white/10" />
+                      <div className="pointer-events-none absolute -bottom-12 -left-6 h-36 w-36 rounded-full bg-white/10" />
+                      <div className="relative">
+                        <h3 className="font-sans text-[20px] font-extrabold tracking-tight">
+                          Need liquidity?
+                        </h3>
+                        <p className="mt-1.5 max-w-[260px] text-[13px] leading-relaxed text-white/80">
+                          Draw against your blended collateral — instant, non-custodial, up to{" "}
+                          {fmtPct(CREDIT_MAX_LTV)} LTV.
+                        </p>
+                      </div>
+                      <GlassButton
+                        variant="light"
+                        onClick={() => setCredit("draw")}
+                        className="mt-5 w-fit px-5 py-2.5 text-[14px] hover:-translate-y-0.5"
+                      >
+                        Draw credit <ArrowUpRight size={15} strokeWidth={2.5} />
+                      </GlassButton>
+                    </div>
                   </div>
-                </div>
 
-                {/* collateral (left) + credit & risk (right) */}
-                <div className="mt-8 grid gap-3 lg:grid-cols-[1.6fr_1fr]">
-                  {/* collateral table */}
-                  <div className="flex flex-col overflow-hidden rounded-2xl border border-hair/70 bg-white shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
-                    <div className="flex items-center justify-between px-5 py-4">
-                      <h2 className="font-sans text-[16px] font-bold tracking-tight text-ink">
-                        Collateral
-                      </h2>
-                      <span className="rounded-full bg-off px-2.5 py-1 font-mono text-[11.5px] text-ink-m">
-                        {assets.length} assets · {fmtUSD(d.collateral)}
-                      </span>
-                    </div>
+                  {/* collateral (left) + credit & risk (right) */}
+                  <div className="mt-8 grid gap-3 lg:grid-cols-[1.6fr_1fr]">
+                    {/* collateral table */}
+                    <div className="flex flex-col overflow-hidden rounded-2xl border border-hair/70 bg-white shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
+                      <div className="flex items-center justify-between px-5 py-4">
+                        <h2 className="font-sans text-[16px] font-bold tracking-tight text-ink">
+                          Collateral
+                        </h2>
+                        <span className="rounded-full bg-off px-2.5 py-1 font-mono text-[11.5px] text-ink-m">
+                          {assets.length} assets · {fmtUSD(d.collateral)}
+                        </span>
+                      </div>
 
-                    {/* column header — shared template w/ rows so columns align */}
-                    <div className="hidden grid-cols-[minmax(0,1.9fr)_1.2fr_1.1fr_1.1fr_208px] items-center gap-3 border-y border-hair bg-off px-5 py-2.5 font-mono text-[10.5px] uppercase tracking-[0.16em] text-ink-f md:grid">
-                      <span>Asset</span>
-                      <span>Venue</span>
-                      <span className="text-right">Amount</span>
-                      <span className="text-right">Value</span>
-                      <span className="text-right">Actions</span>
-                    </div>
+                      {/* column header — shared template w/ rows so columns align */}
+                      <div className="hidden grid-cols-[minmax(0,1.9fr)_1.2fr_1.1fr_1.1fr_208px] items-center gap-3 border-y border-hair bg-off px-5 py-2.5 font-mono text-[10.5px] uppercase tracking-[0.16em] text-ink-f md:grid">
+                        <span>Asset</span>
+                        <span>Venue</span>
+                        <span className="text-right">Amount</span>
+                        <span className="text-right">Value</span>
+                        <span className="text-right">Actions</span>
+                      </div>
 
-                    {assets.map((a, i) => {
-                      const value = a.amount * a.price;
-                      const pct = d.collateral > 0 ? (value / d.collateral) * 100 : 0;
-                      return (
-                        <div
-                          key={a.sym}
-                          className="grid grid-cols-2 items-center gap-3 border-t border-hair-lt px-5 py-3.5 transition-colors hover:bg-off md:grid-cols-[minmax(0,1.9fr)_1.2fr_1.1fr_1.1fr_208px]"
-                        >
-                          {/* asset */}
-                          <div className="flex items-center gap-3">
-                            <AssetLogo sym={a.sym} size={36} />
-                            <div className="flex flex-col">
-                              <span className="text-[14px] font-semibold text-ink">{a.sym}</span>
-                              <span className="text-[12px] text-ink-m">{a.name}</span>
+                      {assets.map((a, i) => {
+                        const value = a.amount * a.price;
+                        const pct = d.collateral > 0 ? (value / d.collateral) * 100 : 0;
+                        return (
+                          <div
+                            key={a.sym}
+                            className="grid grid-cols-2 items-center gap-3 border-t border-hair-lt px-5 py-3.5 transition-colors hover:bg-off md:grid-cols-[minmax(0,1.9fr)_1.2fr_1.1fr_1.1fr_208px]"
+                          >
+                            {/* asset */}
+                            <div className="flex items-center gap-3">
+                              <AssetLogo sym={a.sym} size={36} />
+                              <div className="flex flex-col">
+                                <span className="text-[14px] font-semibold text-ink">{a.sym}</span>
+                                <span className="text-[12px] text-ink-m">{a.name}</span>
+                              </div>
                             </div>
-                          </div>
-                          {/* venue */}
-                          <div className="hidden md:block">
-                            <span
-                              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[11px] font-medium ${a.defi ? "bg-red-bg text-red-d" : "bg-off text-ink-m"}`}
-                            >
+                            {/* venue */}
+                            <div className="hidden md:block">
                               <span
-                                className={`h-1.5 w-1.5 rounded-full ${a.defi ? "bg-red" : "bg-ink-f"}`}
-                              />
-                              {a.defi ? "DeFi" : "CeFi"} · {a.venue}
-                            </span>
-                          </div>
-                          {/* amount + unit price */}
-                          <div className="text-right">
-                            <div className="font-mono text-[14px] text-ink">{fmtTok(a.amount)}</div>
-                            <div className="font-mono text-[11px] text-ink-f">
-                              @ {fmtUSD(a.price)}
+                                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[11px] font-medium ${a.defi ? "bg-red-bg text-red-d" : "bg-off text-ink-m"}`}
+                              >
+                                <span
+                                  className={`h-1.5 w-1.5 rounded-full ${a.defi ? "bg-red" : "bg-ink-f"}`}
+                                />
+                                {a.defi ? "DeFi" : "CeFi"} · {a.venue}
+                              </span>
+                            </div>
+                            {/* amount + unit price */}
+                            <div className="text-right">
+                              <div className="font-mono text-[14px] text-ink">
+                                {fmtTok(a.amount)}
+                              </div>
+                              <div className="font-mono text-[11px] text-ink-f">
+                                @ {fmtUSD(a.price)}
+                              </div>
+                            </div>
+                            {/* value + allocation */}
+                            <div className="text-right">
+                              <div className="font-mono text-[14px] font-semibold text-ink">
+                                {fmtUSD(value)}
+                              </div>
+                              <div className="font-mono text-[11px] text-ink-f">
+                                {pct.toFixed(0)}% of book
+                              </div>
+                            </div>
+                            {/* actions */}
+                            <div className="col-span-2 mt-2 flex justify-end gap-2 md:col-span-1 md:mt-0">
+                              <GlassButton
+                                variant="primary"
+                                onClick={() => setAction({ idx: i, mode: "deposit" })}
+                                className="px-3 py-1.5 text-[12px]"
+                              >
+                                <Plus size={13} strokeWidth={2.5} /> Deposit
+                              </GlassButton>
+                              <GlassButton
+                                variant="ghost"
+                                onClick={() => setAction({ idx: i, mode: "withdraw" })}
+                                className="px-3 py-1.5 text-[12px]"
+                              >
+                                <Minus size={13} strokeWidth={2.5} /> Withdraw
+                              </GlassButton>
                             </div>
                           </div>
-                          {/* value + allocation */}
-                          <div className="text-right">
-                            <div className="font-mono text-[14px] font-semibold text-ink">
-                              {fmtUSD(value)}
-                            </div>
-                            <div className="font-mono text-[11px] text-ink-f">
-                              {pct.toFixed(0)}% of book
-                            </div>
-                          </div>
-                          {/* actions */}
-                          <div className="col-span-2 mt-2 flex justify-end gap-2 md:col-span-1 md:mt-0">
-                            <GlassButton
-                              variant="primary"
-                              onClick={() => setAction({ idx: i, mode: "deposit" })}
-                              className="px-3 py-1.5 text-[12px]"
-                            >
-                              <Plus size={13} strokeWidth={2.5} /> Deposit
-                            </GlassButton>
-                            <GlassButton
-                              variant="ghost"
-                              onClick={() => setAction({ idx: i, mode: "withdraw" })}
-                              className="px-3 py-1.5 text-[12px]"
-                            >
-                              <Minus size={13} strokeWidth={2.5} /> Withdraw
-                            </GlassButton>
-                          </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
+
+                    {/* credit + risk (right column) */}
+                    <div className="flex flex-col gap-3">
+                      <CreditPanel
+                        d={d}
+                        onDraw={() => setCredit("draw")}
+                        onRepay={() => setCredit("repay")}
+                      />
+                      <RiskWidget d={d} />
+                    </div>
                   </div>
 
-                  {/* credit + risk (right column) */}
-                  <div className="flex flex-col gap-3">
-                    <CreditPanel
+                  {/* positions */}
+                  <Positions />
+
+                  {/* account hero — card + headline balances (CloudCash-style) */}
+                  <div className="mt-3 grid gap-3 lg:grid-cols-[1.05fr_1fr]">
+                    {/* account overview */}
+                    <AccountPanel
                       d={d}
-                      onDraw={() => setCredit("draw")}
-                      onRepay={() => setCredit("repay")}
+                      borrowed={borrowed}
+                      address={address}
+                      addressLabel={addressLabel}
+                      networkLabel={networkLabel}
                     />
-                    <RiskWidget d={d} />
-                  </div>
-                </div>
-
-                {/* positions */}
-                <Positions />
-
-                {/* account hero — card + headline balances (CloudCash-style) */}
-                <div className="mt-3 grid gap-3 lg:grid-cols-[1.05fr_1fr]">
-                  {/* account overview */}
-                  <AccountPanel
-                    d={d}
-                    borrowed={borrowed}
-                    address={address}
-                    addressLabel={addressLabel}
-                    networkLabel={networkLabel}
-                  />
-                  {/* colored balances */}
-                  <div className="flex flex-col justify-center gap-5 rounded-2xl border border-hair/70 bg-white p-6 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
-                    <div className="flex items-end justify-between">
-                      <BigStat label="Account value" value={d.equity} cls="text-[32px] text-ink" />
-                      <span className="mb-1 inline-flex items-center gap-1 rounded-full bg-[#e7f6ee] px-2 py-0.5 text-[11px] font-semibold text-[#0f9d6e]">
-                        ▲ 4.2%
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <BigStat
-                        label="Available credit"
-                        value={d.available}
-                        cls="text-[22px] text-[#0f9d6e]"
-                      />
-                      <BigStat label="Borrowed" value={borrowed} cls="text-[22px] text-red" />
-                    </div>
-                    <div className="grid grid-cols-2 gap-4 border-t border-hair-lt pt-4">
-                      <BigStat
-                        label="Leverage"
-                        value={d.leverage}
-                        cls="text-[18px] text-ink"
-                        prefix=""
-                        suffix="×"
-                        compact={false}
-                      />
-                      <BigStat
-                        label="Health"
-                        value={d.health === Infinity ? 99.99 : d.health}
-                        cls={`text-[18px] ${healthColor}`}
-                        prefix=""
-                        compact={false}
-                      />
+                    {/* colored balances */}
+                    <div className="flex flex-col justify-center gap-5 rounded-2xl border border-hair/70 bg-white p-6 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
+                      <div className="flex items-end justify-between">
+                        <BigStat
+                          label="Account value"
+                          value={d.equity}
+                          cls="text-[32px] text-ink"
+                        />
+                        <span className="mb-1 inline-flex items-center gap-1 rounded-full bg-[#e7f6ee] px-2 py-0.5 text-[11px] font-semibold text-[#0f9d6e]">
+                          ▲ 4.2%
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <BigStat
+                          label="Available credit"
+                          value={d.available}
+                          cls="text-[22px] text-[#0f9d6e]"
+                        />
+                        <BigStat label="Borrowed" value={borrowed} cls="text-[22px] text-red" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 border-t border-hair-lt pt-4">
+                        <BigStat
+                          label="Leverage"
+                          value={d.leverage}
+                          cls="text-[18px] text-ink"
+                          prefix=""
+                          suffix="×"
+                          compact={false}
+                        />
+                        <BigStat
+                          label="Health"
+                          value={d.health === Infinity ? 99.99 : d.health}
+                          cls={`text-[18px] ${healthColor}`}
+                          prefix=""
+                          compact={false}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {/* balances chart */}
-                <BalancesCard value={d.equity} />
-              </section>
+                  {/* balances chart */}
+                  <BalancesCard value={d.equity} />
+                </section>
+              ) : (
+                <BorrowLive />
+              )
             ) : (
               <EarnView />
             )}
