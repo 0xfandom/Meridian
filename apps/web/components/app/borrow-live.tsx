@@ -78,11 +78,12 @@ function LoadingCard() {
   );
 }
 
-type ManageKind = "borrow" | "repay" | "add" | "withdraw" | "close";
+type ManageKind = "borrow" | "repay" | "add" | "withdraw" | "lever" | "close";
 
 const MANAGE_BUTTONS: { kind: ManageKind; label: string; Icon: typeof Plus }[] = [
   { kind: "borrow", label: "Borrow", Icon: Plus },
   { kind: "repay", label: "Repay", Icon: Minus },
+  { kind: "lever", label: "Lever up", Icon: TrendingUp },
   { kind: "add", label: "Add collateral", Icon: ArrowDownLeft },
   { kind: "withdraw", label: "Withdraw", Icon: ArrowUpRight },
   { kind: "close", label: "Close", Icon: X },
@@ -214,6 +215,8 @@ function managePhaseLabel(phase: CreditPhase): string {
       return "Adding collateral…";
     case "withdrawing":
       return "Withdrawing…";
+    case "trading":
+      return "Swapping USDC → WETH…";
     case "closing":
       return "Closing…";
     default:
@@ -244,6 +247,7 @@ function ManageModal({
     phase === "repaying" ||
     phase === "adding" ||
     phase === "withdrawing" ||
+    phase === "trading" ||
     phase === "closing";
 
   // Close on a confirmed receipt; the position refetches on its own poll.
@@ -255,7 +259,7 @@ function ManageModal({
 
   const config: Record<
     ManageKind,
-    { title: string; unit: string; max?: number; run: () => Promise<void> }
+    { title: string; unit: string; max?: number; hint?: string; run: () => Promise<void> }
   > = {
     borrow: {
       title: "Borrow USDC",
@@ -267,6 +271,13 @@ function ManageModal({
       unit: "USDC",
       max: Math.min(account.debt, account.usdcHeld),
       run: () => actions.repay(account.account, amt),
+    },
+    lever: {
+      title: "Lever up",
+      unit: "USDC",
+      max: account.usdcHeld,
+      hint: "Swaps the account's USDC into WETH collateral through the whitelisted Uniswap adapter — inside the account, never leaving it.",
+      run: () => actions.lever(account.account, amt),
     },
     add: {
       title: "Add collateral",
@@ -346,6 +357,10 @@ function ManageModal({
               )}
             </div>
           </div>
+        )}
+
+        {c.hint && !isClose && (
+          <p className="mt-3 text-[12px] leading-relaxed text-ink-m">{c.hint}</p>
         )}
 
         {overMax && (
