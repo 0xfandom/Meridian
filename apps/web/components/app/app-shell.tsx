@@ -45,6 +45,8 @@ import { useAccounts } from "@/lib/use-accounts";
 import type { AccountView } from "@/lib/api";
 import { useWallet, shortenAddress } from "@/lib/use-wallet";
 import { useWalletBalances } from "@/lib/use-balances";
+import { useLenderPosition } from "@/lib/use-lender-position";
+import { usePoolActions, type PoolActions, type TxPhase } from "@/lib/use-pool-actions";
 
 const DEMO_ADDRESS = "0x1f3b…c92a"; // shown in demo mode, where there is no connected wallet
 const LOCAL_NETWORK = "Local"; // anvil chain id 31337
@@ -1805,6 +1807,25 @@ function EarnView() {
     );
   }, [live]);
 
+  // With a real wallet connected, the Senior tranche is the live pool: the wallet's USDC is the
+  // supply cap and its pool shares are the supplied amount. The Junior tranche has no on-chain
+  // counterpart, so it stays mock (and the action modal discloses that).
+  const { isConnected } = useWallet();
+  const balances = useWalletBalances();
+  const position = useLenderPosition();
+  const actions = usePoolActions();
+  useEffect(() => {
+    if (!isConnected || !position) return;
+    setPools((prev) =>
+      prev.map((p) => (p.tier === "Senior" ? { ...p, supplied: position.supplied } : p)),
+    );
+  }, [isConnected, position]);
+
+  const openAct = (a: EarnAction) => {
+    actions.reset();
+    setAct(a);
+  };
+
   const e = useMemo(() => {
     const supplied = pools.reduce((s, p) => s + p.supplied, 0);
     const blendedApy =
@@ -1905,7 +1926,7 @@ function EarnView() {
           </div>
           <GlassButton
             variant="light"
-            onClick={() => setAct({ idx: bestIdx, mode: "supply" })}
+            onClick={() => openAct({ idx: bestIdx, mode: "supply" })}
             className="mt-5 w-fit px-5 py-2.5 text-[14px] hover:-translate-y-0.5"
           >
             Supply USDC <ArrowUpRight size={15} strokeWidth={2.5} />
@@ -1959,14 +1980,14 @@ function EarnView() {
                 <div className="mt-5 flex gap-2">
                   <GlassButton
                     variant="outline"
-                    onClick={() => setAct({ idx: i, mode: "supply" })}
+                    onClick={() => openAct({ idx: i, mode: "supply" })}
                     className="flex-1 py-2.5 text-[13px]"
                   >
                     Supply
                   </GlassButton>
                   <GlassButton
                     variant="outline"
-                    onClick={() => setAct({ idx: i, mode: "withdraw" })}
+                    onClick={() => openAct({ idx: i, mode: "withdraw" })}
                     className="flex-1 py-2.5 text-[13px]"
                   >
                     Withdraw
@@ -2102,15 +2123,28 @@ function EarnView() {
         </div>
       </div>
 
-      {act && (
-        <EarnModal
-          pool={pools[act.idx]}
-          mode={act.mode}
-          usdc={usdc}
-          onClose={() => setAct(null)}
-          onConfirm={(amt) => applyEarn(act.idx, act.mode, amt)}
-        />
-      )}
+      {act &&
+        (() => {
+          const p = pools[act.idx];
+          const liveTranche = p.tier === "Senior" && isConnected;
+          const maxOverride = liveTranche
+            ? act.mode === "supply"
+              ? (balances?.usdc ?? 0)
+              : (position?.maxWithdraw ?? 0)
+            : undefined;
+          return (
+            <EarnModal
+              pool={p}
+              mode={act.mode}
+              usdc={usdc}
+              onClose={() => setAct(null)}
+              onConfirm={(amt) => applyEarn(act.idx, act.mode, amt)}
+              live={liveTranche}
+              actions={liveTranche ? actions : undefined}
+              maxOverride={maxOverride}
+            />
+          );
+        })()}
     </section>
   );
 }
@@ -2124,29 +2158,68 @@ function Metric({ k, v }: { k: string; v: string }) {
   );
 }
 
+function earnPhaseLabel(phase: TxPhase): string {
+  switch (phase) {
+    case "approving":
+      return "Approving USDC…";
+    case "depositing":
+      return "Confirming supply…";
+    case "withdrawing":
+      return "Confirming withdrawal…";
+    default:
+      return "";
+  }
+}
+
 function EarnModal({
   pool,
   mode,
   usdc,
   onClose,
   onConfirm,
+  live = false,
+  actions,
+  maxOverride,
 }: {
   pool: Pool;
   mode: "supply" | "withdraw";
   usdc: number;
   onClose: () => void;
   onConfirm: (amt: number) => void;
+  live?: boolean;
+  actions?: PoolActions;
+  maxOverride?: number;
 }) {
-  const max = mode === "supply" ? usdc : pool.supplied;
+  const max = maxOverride ?? (mode === "supply" ? usdc : pool.supplied);
   const [raw, setRaw] = useState("");
   const amt = parseFloat(raw) || 0;
   const valid = amt > 0 && amt <= max;
   const title = mode === "supply" ? "Supply" : "Withdraw";
 
+  const phase = actions?.phase ?? "idle";
+  const busy = phase === "approving" || phase === "depositing" || phase === "withdrawing";
+
+  // Once the on-chain action confirms, let the success state show briefly, then close. The pool
+  // position and stats refetch on their own poll.
+  useEffect(() => {
+    if (!live || phase !== "success") return;
+    const t = setTimeout(onClose, 900);
+    return () => clearTimeout(t);
+  }, [live, phase, onClose]);
+
+  const run = () => {
+    if (live && actions) {
+      if (mode === "supply") void actions.deposit(amt);
+      else void actions.withdraw(amt);
+    } else {
+      onConfirm(amt);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4 backdrop-blur-sm"
-      onClick={onClose}
+      onClick={busy ? undefined : onClose}
     >
       <div
         className="w-full max-w-[420px] rounded-[22px] bg-white p-6 shadow-[0_40px_80px_-20px_rgba(0,0,0,0.5)]"
@@ -2179,6 +2252,7 @@ function EarnModal({
               value={raw}
               onChange={(ev) => setRaw(ev.target.value.replace(/[^0-9.]/g, ""))}
               placeholder="0"
+              disabled={busy}
               className="w-full bg-transparent font-sans text-[28px] font-extrabold tracking-tight text-ink outline-none placeholder:text-ink-f"
             />
             <button
@@ -2196,15 +2270,31 @@ function EarnModal({
           </p>
         )}
         <button
-          disabled={!valid}
-          onClick={() => onConfirm(amt)}
+          disabled={!valid || busy}
+          onClick={run}
           className="mt-5 w-full rounded-full bg-ink py-3.5 text-[15px] font-semibold text-white transition-colors hover:bg-red disabled:cursor-not-allowed disabled:bg-hair disabled:text-ink-f"
         >
-          {title} {valid ? fmtUSD(amt) : ""}
+          {busy ? earnPhaseLabel(phase) : `${title} ${valid ? fmtUSD(amt) : ""}`}
         </button>
-        <p className="mt-3 text-center font-mono text-[11px] text-ink-f">
-          Mock action · updates local state only
-        </p>
+        {live ? (
+          phase === "error" ? (
+            <p className="mt-3 text-center font-mono text-[11px] text-red">
+              {actions?.error ?? "Transaction failed"}
+            </p>
+          ) : phase === "success" ? (
+            <p className="mt-3 text-center font-mono text-[11px] text-[#0f9d6e]">
+              Confirmed on-chain
+            </p>
+          ) : (
+            <p className="mt-3 text-center font-mono text-[11px] text-ink-f">
+              Live transaction · confirm in your wallet
+            </p>
+          )
+        ) : (
+          <p className="mt-3 text-center font-mono text-[11px] text-ink-f">
+            Mock action · updates local state only
+          </p>
+        )}
       </div>
     </div>
   );
