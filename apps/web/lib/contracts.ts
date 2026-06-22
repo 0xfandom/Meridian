@@ -47,6 +47,10 @@ export const swapAdapterAbi = parseAbi([
 
 export const POOL_FEE = 500; // the local DEX fee tier the seed/deploy use
 
+// The local mock USDC/WETH expose an open mint; the faucet uses it so a fresh wallet can self-fund
+// for the demo. Real token deployments do not have this, so the faucet is local-only.
+export const faucetAbi = parseAbi(["function mint(address to, uint256 amount)"]);
+
 // addCollateral is not on the facade; the owner calls the credit manager directly (it pulls the
 // collateral from the caller, so the manager is the approval target).
 export const creditManagerAbi = parseAbi([

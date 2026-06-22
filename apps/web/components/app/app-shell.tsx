@@ -27,6 +27,7 @@ import {
   PiggyBank,
   Copy,
   Check,
+  Coins,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { AnimatedNumber } from "../animated-number";
@@ -46,6 +47,7 @@ import type { AccountView } from "@/lib/api";
 import { useWallet, shortenAddress } from "@/lib/use-wallet";
 import { useWalletBalances } from "@/lib/use-balances";
 import { useLenderPosition } from "@/lib/use-lender-position";
+import { useFaucet } from "@/lib/use-faucet";
 import { usePoolActions, type PoolActions, type TxPhase } from "@/lib/use-pool-actions";
 import { BorrowLive } from "./borrow-live";
 
@@ -791,6 +793,26 @@ function WalletModal({
 /* ---------- connected: dashboard ---------- */
 type Action = { idx: number; mode: "deposit" | "withdraw" } | null;
 
+// Local-only test faucet pill. Mints mock USDC + WETH to the connected wallet so the demo works in
+// a browser with no external funding; hidden when the deployment has no mintable mock tokens.
+function FaucetButton() {
+  const faucet = useFaucet();
+  if (!faucet.available) return null;
+  const busy = faucet.phase === "minting";
+  const label = busy ? "Minting…" : faucet.phase === "success" ? "Funded" : "Faucet";
+  return (
+    <button
+      onClick={() => void faucet.mint()}
+      disabled={busy}
+      title="Mint mock USDC and WETH to your wallet (local demo)"
+      className="hidden items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-off disabled:opacity-60 sm:flex"
+    >
+      <Coins size={13} className="text-red" />
+      {label}
+    </button>
+  );
+}
+
 function Dashboard({
   onDisconnect,
   address,
@@ -934,6 +956,7 @@ function Dashboard({
           ))}
         </div>
         <div className="flex items-center gap-2 justify-self-end">
+          {!demo && <FaucetButton />}
           <span className="hidden items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-[13px] font-medium text-ink sm:flex">
             <span
               className={`h-1.5 w-1.5 rounded-full ${wrongNetwork ? "bg-[#d99100]" : "bg-red"}`}
