@@ -6,6 +6,7 @@ import type { ApiConfig } from "./config.js";
 import { issueSession, verifySession } from "./auth/session.js";
 import { NonceStore, verifySiwe } from "./auth/siwe.js";
 import { toJson } from "./serialize.js";
+import { loadDeployment } from "./deployment.js";
 import type { SnapshotSource } from "./state/source.js";
 import {
   accountList,
@@ -29,6 +30,9 @@ export function createApp(deps: AppDeps): Hono {
   const app = new Hono();
   const { config, source, nonces, now } = deps;
 
+  // The deployment manifest is static for a given run; load it once at startup.
+  const deployment = loadDeployment(config.deploymentPath);
+
   // Allow browser clients (the web app) to read the API cross-origin. Origin is configurable;
   // defaults to "*" since the read endpoints are public and auth uses bearer tokens, not cookies.
   app.use("*", cors({ origin: config.corsOrigin }));
@@ -49,6 +53,10 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/positions", (c) => json(c, openPositions(source.refresh())));
 
   app.get("/liquidations", (c) => json(c, liquidationList(source.refresh())));
+
+  app.get("/deployment", (c) =>
+    deployment ? json(c, deployment) : json(c, { error: "deployment manifest unavailable" }, 503),
+  );
 
   app.get("/risk-parameters", (c) => {
     try {
