@@ -1,23 +1,47 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { parseUnits } from "viem";
+import { type Abi, parseUnits } from "viem";
 import { usePublicClient, useWriteContract } from "wagmi";
-import { USDC_DECIMALS, WETH_DECIMALS, creditFacadeAbi, erc20Abi } from "./contracts";
+import {
+  USDC_DECIMALS,
+  WETH_DECIMALS,
+  creditFacadeAbi,
+  creditManagerAbi,
+  erc20Abi,
+} from "./contracts";
 import { useDeployment } from "./use-deployment";
 import { useWallet } from "./use-wallet";
 
-export type CreditPhase = "idle" | "approving" | "opening" | "success" | "error";
+export type CreditPhase =
+  | "idle"
+  | "approving"
+  | "opening"
+  | "borrowing"
+  | "repaying"
+  | "adding"
+  | "withdrawing"
+  | "closing"
+  | "success"
+  | "error";
 
 /// On-chain borrower actions. open() approves the credit manager to pull the WETH collateral when
 /// its allowance is short, then opens a margin account that posts the collateral and draws the
-/// requested USDC in one call. `phase` drives the modal's status UI; `onSuccess` (e.g. a refetch
-/// trigger) runs after a confirmed receipt.
+/// requested USDC in one call. The manage actions adjust an existing account: borrow/repay move
+/// debt (repayment is funded by the USDC the account already holds, so no approval), addCollateral
+/// pulls WETH from the wallet (approval needed), withdrawCollateral returns WETH to the wallet, and
+/// close repays from the account and returns the rest. `phase` drives status UI; `onSuccess`
+/// (e.g. a refetch trigger) runs after a confirmed receipt.
 export interface CreditActions {
   phase: CreditPhase;
   error?: string;
   txHash?: `0x${string}`;
   open: (collateralWeth: number, borrowUsdc: number) => Promise<void>;
+  borrow: (account: `0x${string}`, amountUsdc: number) => Promise<void>;
+  repay: (account: `0x${string}`, amountUsdc: number) => Promise<void>;
+  addCollateral: (account: `0x${string}`, amountWeth: number) => Promise<void>;
+  withdrawCollateral: (account: `0x${string}`, amountWeth: number) => Promise<void>;
+  close: (account: `0x${string}`) => Promise<void>;
   reset: () => void;
 }
 
@@ -84,7 +108,131 @@ export function useCreditActions(onSuccess?: () => void): CreditActions {
     [address, weth, creditManager, facade, publicClient, writeContractAsync, onSuccess],
   );
 
-  return { phase, error, txHash, open, reset };
+  // Sends a single write, tracks the phase, waits for the receipt, then fires onSuccess. Used by
+  // every manage action; opening is separate because it may also approve first.
+  const send = useCallback(
+    async (
+      busy: CreditPhase,
+      call: { address: `0x${string}`; abi: Abi; functionName: string; args: unknown[] },
+    ) => {
+      if (!publicClient) return;
+      try {
+        setError(undefined);
+        setPhase(busy);
+        const hash = await writeContractAsync(call as never);
+        setTxHash(hash);
+        await publicClient.waitForTransactionReceipt({ hash });
+        setPhase("success");
+        onSuccess?.();
+      } catch (e) {
+        setError(toMessage(e));
+        setPhase("error");
+      }
+    },
+    [publicClient, writeContractAsync, onSuccess],
+  );
+
+  const borrow = useCallback(
+    async (account: `0x${string}`, amountUsdc: number) => {
+      if (!facade) return;
+      await send("borrowing", {
+        address: facade,
+        abi: creditFacadeAbi,
+        functionName: "increaseDebt",
+        args: [account, parseUnits(amountUsdc.toString(), USDC_DECIMALS)],
+      });
+    },
+    [facade, send],
+  );
+
+  const repay = useCallback(
+    async (account: `0x${string}`, amountUsdc: number) => {
+      if (!facade) return;
+      await send("repaying", {
+        address: facade,
+        abi: creditFacadeAbi,
+        functionName: "decreaseDebt",
+        args: [account, parseUnits(amountUsdc.toString(), USDC_DECIMALS)],
+      });
+    },
+    [facade, send],
+  );
+
+  const withdrawCollateral = useCallback(
+    async (account: `0x${string}`, amountWeth: number) => {
+      if (!facade || !address) return;
+      await send("withdrawing", {
+        address: facade,
+        abi: creditFacadeAbi,
+        functionName: "withdrawCollateral",
+        args: [account, parseUnits(amountWeth.toString(), WETH_DECIMALS), address],
+      });
+    },
+    [facade, address, send],
+  );
+
+  const close = useCallback(
+    async (account: `0x${string}`) => {
+      if (!facade) return;
+      await send("closing", {
+        address: facade,
+        abi: creditFacadeAbi,
+        functionName: "closeCreditAccount",
+        args: [account],
+      });
+    },
+    [facade, send],
+  );
+
+  // addCollateral pulls WETH from the wallet, so approve the credit manager first when short.
+  const addCollateral = useCallback(
+    async (account: `0x${string}`, amountWeth: number) => {
+      if (!address || !weth || !creditManager || !publicClient) return;
+      const amount = parseUnits(amountWeth.toString(), WETH_DECIMALS);
+      try {
+        setError(undefined);
+        const allowance = await publicClient.readContract({
+          address: weth,
+          abi: erc20Abi,
+          functionName: "allowance",
+          args: [address, creditManager],
+        });
+        if (allowance < amount) {
+          setPhase("approving");
+          const approveHash = await writeContractAsync({
+            address: weth,
+            abi: erc20Abi,
+            functionName: "approve",
+            args: [creditManager, amount],
+          });
+          await publicClient.waitForTransactionReceipt({ hash: approveHash });
+        }
+        await send("adding", {
+          address: creditManager,
+          abi: creditManagerAbi,
+          functionName: "addCollateral",
+          args: [account, amount],
+        });
+      } catch (e) {
+        setError(toMessage(e));
+        setPhase("error");
+      }
+    },
+    [address, weth, creditManager, publicClient, writeContractAsync, send],
+  );
+
+  return {
+    phase,
+    error,
+    txHash,
+    open,
+    borrow,
+    repay,
+    addCollateral,
+    withdrawCollateral,
+    close,
+    reset,
+  };
 }
 
 function toMessage(e: unknown): string {
