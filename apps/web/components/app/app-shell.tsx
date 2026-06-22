@@ -1117,6 +1117,26 @@ function Dashboard({
                           </div>
                         );
                       })}
+                      {/* brand footer — big clipped wordmark left, brand caption right */}
+                      <div className="mt-auto flex items-end justify-between gap-4 px-5 pt-6">
+                        <div
+                          aria-hidden="true"
+                          className="overflow-hidden"
+                          style={{ fontSize: "clamp(2.5rem, 11vw, 8rem)", height: "0.81em" }}
+                        >
+                          <span className="block select-none font-sans font-black leading-none tracking-tighter text-ink/[0.06]">
+                            Meridian
+                          </span>
+                        </div>
+                        <div className="mb-2 hidden shrink-0 flex-col items-end gap-1 sm:flex">
+                          <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-f">
+                            <span className="h-1.5 w-1.5 rounded-full bg-red" /> Non-custodial
+                          </span>
+                          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-f">
+                            Prime brokerage · v1
+                          </span>
+                        </div>
+                      </div>
                     </div>
 
                     {/* credit + risk (right column) */}
