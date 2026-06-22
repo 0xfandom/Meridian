@@ -1,14 +1,16 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { type Abi, parseUnits } from "viem";
+import { type Abi, encodeFunctionData, parseUnits } from "viem";
 import { usePublicClient, useWriteContract } from "wagmi";
 import {
+  POOL_FEE,
   USDC_DECIMALS,
   WETH_DECIMALS,
   creditFacadeAbi,
   creditManagerAbi,
   erc20Abi,
+  swapAdapterAbi,
 } from "./contracts";
 import { useDeployment } from "./use-deployment";
 import { useWallet } from "./use-wallet";
@@ -21,6 +23,7 @@ export type CreditPhase =
   | "repaying"
   | "adding"
   | "withdrawing"
+  | "trading"
   | "closing"
   | "success"
   | "error";
@@ -41,6 +44,7 @@ export interface CreditActions {
   repay: (account: `0x${string}`, amountUsdc: number) => Promise<void>;
   addCollateral: (account: `0x${string}`, amountWeth: number) => Promise<void>;
   withdrawCollateral: (account: `0x${string}`, amountWeth: number) => Promise<void>;
+  lever: (account: `0x${string}`, amountUsdc: number) => Promise<void>;
   close: (account: `0x${string}`) => Promise<void>;
   reset: () => void;
 }
@@ -56,8 +60,10 @@ export function useCreditActions(onSuccess?: () => void): CreditActions {
   const [txHash, setTxHash] = useState<`0x${string}`>();
 
   const weth = deployment?.addresses.weth as `0x${string}` | undefined;
+  const usdc = deployment?.addresses.usdc as `0x${string}` | undefined;
   const creditManager = deployment?.addresses.creditManager as `0x${string}` | undefined;
   const facade = deployment?.addresses.creditFacade as `0x${string}` | undefined;
+  const swapAdapter = deployment?.addresses.swapAdapter as `0x${string}` | undefined;
 
   const reset = useCallback(() => {
     setPhase("idle");
@@ -171,6 +177,38 @@ export function useCreditActions(onSuccess?: () => void): CreditActions {
     [facade, address, send],
   );
 
+  // Lever up: swap the account's drawn USDC into WETH collateral through the whitelisted adapter,
+  // batched so the account approves the adapter and swaps in one health-checked multicall.
+  const lever = useCallback(
+    async (account: `0x${string}`, amountUsdc: number) => {
+      if (!facade || !usdc || !weth || !swapAdapter) return;
+      const amount = parseUnits(amountUsdc.toString(), USDC_DECIMALS);
+      const approveCall = encodeFunctionData({
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [swapAdapter, amount],
+      });
+      const swapCall = encodeFunctionData({
+        abi: swapAdapterAbi,
+        functionName: "swapExactInputSingle",
+        args: [usdc, weth, POOL_FEE, amount, 0n],
+      });
+      await send("trading", {
+        address: facade,
+        abi: creditFacadeAbi,
+        functionName: "multicall",
+        args: [
+          account,
+          [
+            { target: usdc, callData: approveCall },
+            { target: swapAdapter, callData: swapCall },
+          ],
+        ],
+      });
+    },
+    [facade, usdc, weth, swapAdapter, send],
+  );
+
   const close = useCallback(
     async (account: `0x${string}`) => {
       if (!facade) return;
@@ -230,6 +268,7 @@ export function useCreditActions(onSuccess?: () => void): CreditActions {
     repay,
     addCollateral,
     withdrawCollateral,
+    lever,
     close,
     reset,
   };

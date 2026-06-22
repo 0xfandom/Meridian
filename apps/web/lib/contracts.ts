@@ -29,13 +29,23 @@ export const poolAbi = parseAbi([
 
 // Borrower entry point. openCreditAccount posts collateral (pulled by the credit manager, which the
 // borrower must approve) and draws credit in one call; debt is adjusted via increase/decreaseDebt.
+// multicall routes a batch of calls through the account (e.g. approve + swap via an adapter); the
+// manager applies one health check at the end and gates each call on the whitelist.
 export const creditFacadeAbi = parseAbi([
   "function openCreditAccount(uint256 collateral, uint256 borrow) returns (address account)",
   "function increaseDebt(address account, uint256 amount)",
   "function decreaseDebt(address account, uint256 amount)",
   "function withdrawCollateral(address account, uint256 amount, address to)",
   "function closeCreditAccount(address account)",
+  "function multicall(address account, (address target, bytes callData)[] calls)",
 ]);
+
+// The whitelisted Uniswap v3 swap adapter, called through the account inside a multicall.
+export const swapAdapterAbi = parseAbi([
+  "function swapExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint256 amountOutMin) returns (uint256)",
+]);
+
+export const POOL_FEE = 500; // the local DEX fee tier the seed/deploy use
 
 // addCollateral is not on the facade; the owner calls the credit manager directly (it pulls the
 // collateral from the caller, so the manager is the approval target).

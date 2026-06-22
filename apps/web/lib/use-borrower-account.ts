@@ -1,7 +1,7 @@
 "use client";
 
 import { formatUnits } from "viem";
-import { useReadContract } from "wagmi";
+import { useReadContracts } from "wagmi";
 import { USDC_DECIMALS, WETH_DECIMALS, erc20Abi } from "./contracts";
 import { useAccounts } from "./use-accounts";
 import { useDeployment } from "./use-deployment";
@@ -34,28 +34,41 @@ export function useBorrowerAccount(): BorrowerAccount | null | undefined {
   const accounts = useAccounts();
 
   const usdc = deployment?.addresses.usdc as `0x${string}` | undefined;
+  const weth = deployment?.addresses.weth as `0x${string}` | undefined;
   const mine =
     isConnected && address && accounts
       ? accounts.find((a) => a.owner.toLowerCase() === address.toLowerCase() && a.open)
       : undefined;
 
-  // USDC the margin account holds (the drawn-but-unspent credit). Gated on a resolved account.
-  const { data: heldRaw } = useReadContract({
-    address: usdc,
-    abi: erc20Abi,
-    functionName: "balanceOf",
-    args: mine ? [mine.account as `0x${string}`] : undefined,
-    query: { enabled: Boolean(usdc && mine), refetchInterval: 8000 },
+  // Read the account's live balances on-chain. The contract values collateral as the account's WETH
+  // balance and credit as the USDC it holds, so reading the balances (rather than the indexer's
+  // event-tracked deposited amount) stays correct after a swap moves USDC into WETH inside the
+  // account.
+  const acct = mine ? (mine.account as `0x${string}`) : undefined;
+  const { data: balances } = useReadContracts({
+    query: { enabled: Boolean(usdc && weth && acct), refetchInterval: 8000 },
+    contracts:
+      usdc && weth && acct
+        ? [
+            { address: usdc, abi: erc20Abi, functionName: "balanceOf", args: [acct] },
+            { address: weth, abi: erc20Abi, functionName: "balanceOf", args: [acct] },
+          ]
+        : [],
   });
 
   if (!isConnected || accounts === null) return undefined; // loading
   if (!mine) return null; // no open account
 
+  const usdcRaw = balances?.[0]?.status === "success" ? (balances[0].result as bigint) : undefined;
+  const wethRaw = balances?.[1]?.status === "success" ? (balances[1].result as bigint) : undefined;
+
   const price = stats?.collateralPrice ?? 0;
-  const collateralWeth = Number(formatUnits(BigInt(mine.collateralDeposited), WETH_DECIMALS));
+  const collateralWeth =
+    wethRaw !== undefined
+      ? Number(formatUnits(wethRaw, WETH_DECIMALS))
+      : Number(formatUnits(BigInt(mine.collateralDeposited), WETH_DECIMALS));
   const debt = Number(formatUnits(BigInt(mine.facePrincipal), USDC_DECIMALS));
-  const usdcHeld =
-    heldRaw !== undefined ? Number(formatUnits(heldRaw as bigint, USDC_DECIMALS)) : 0;
+  const usdcHeld = usdcRaw !== undefined ? Number(formatUnits(usdcRaw, USDC_DECIMALS)) : 0;
 
   const collateralValue = collateralWeth * price;
   const assets = collateralValue + usdcHeld;
