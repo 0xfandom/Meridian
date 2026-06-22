@@ -368,7 +368,7 @@ function FloatPanel({
         style={{
           transform: `translate3d(${par.x * depth}px, ${par.y * depth}px, 0) rotateY(${par.x * tilt}deg) rotateX(${-par.y * tilt}deg)`,
           transformStyle: "preserve-3d",
-          transition: "transform 0.18s ease-out",
+          transition: "transform 0.5s cubic-bezier(.2,.7,.2,1)",
         }}
       >
         {children}
@@ -473,7 +473,6 @@ function ConnectGate({ onOpen }: { onOpen: () => void }) {
     const r = el.getBoundingClientRect();
     const fx = (e.clientX - r.left) / r.width;
     const fy = (e.clientY - r.top) / r.height;
-    el.style.background = `radial-gradient(420px circle at ${fx * 100}% ${fy * 100}%, rgba(225,29,42,0.10), transparent 68%)`;
     setPar({ x: fx - 0.5, y: fy - 0.5 });
   };
 
@@ -486,9 +485,8 @@ function ConnectGate({ onOpen }: { onOpen: () => void }) {
       <div
         className="pointer-events-none absolute inset-0"
         style={{
-          backgroundImage:
-            "linear-gradient(to right,#e2e2df 1px,transparent 1px),linear-gradient(to bottom,#e2e2df 1px,transparent 1px)",
-          backgroundSize: "22px 22px",
+          backgroundImage: "radial-gradient(circle, #d8d8d3 1.2px, transparent 1.5px)",
+          backgroundSize: "30px 30px",
           WebkitMaskImage: "radial-gradient(120% 95% at 50% 28%, #000 30%, transparent 82%)",
           maskImage: "radial-gradient(120% 95% at 50% 28%, #000 30%, transparent 82%)",
         }}
@@ -1018,7 +1016,7 @@ function Dashboard({
                           Need liquidity?
                         </h3>
                         <p className="mt-1.5 max-w-[260px] text-[13px] leading-relaxed text-white/80">
-                          Draw against your blended collateral — instant, non-custodial, up to{" "}
+                          Draw against your blended collateral. Instant, non-custodial, up to{" "}
                           {fmtPct(CREDIT_MAX_LTV)} LTV.
                         </p>
                       </div>
@@ -1906,14 +1904,14 @@ function EarnView() {
 
       {/* row 1: supply allocation + CTA */}
       <div className="mt-7 grid gap-3 lg:grid-cols-[1.6fr_1fr]">
-        <div className="rounded-2xl border border-hair/70 bg-white p-6 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
+        <div className="flex flex-col rounded-2xl border border-hair/70 bg-white p-6 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
           <div className="flex items-center justify-between">
             <h2 className="font-sans text-[16px] font-bold tracking-tight text-ink">
               Supply allocation
             </h2>
             <span className="font-mono text-[12px] text-ink-m">{fmtUSD(e.supplied)}</span>
           </div>
-          <div className="mt-5 flex flex-col gap-4">
+          <div className="mt-5 flex flex-col gap-5">
             {pools.map((p) => {
               const tone = p.tier === "Senior" ? "#0a0a0a" : "#e11d2a";
               const pct = e.supplied > 0 ? (p.supplied / e.supplied) * 100 : 0;
@@ -1941,6 +1939,24 @@ function EarnView() {
               );
             })}
           </div>
+          <div className="mt-auto grid grid-cols-2 gap-4 border-t border-hair-lt pt-5">
+            <div>
+              <div className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-ink-m">
+                Blended APY
+              </div>
+              <div className="mt-1 font-sans text-[18px] font-bold tracking-tight text-[#0f9d6e]">
+                {fmtPct(e.blendedApy)}
+              </div>
+            </div>
+            <div>
+              <div className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-ink-m">
+                Wallet USDC
+              </div>
+              <div className="mt-1 font-sans text-[18px] font-bold tracking-tight text-ink">
+                {fmtUSD(usdc)}
+              </div>
+            </div>
+          </div>
         </div>
         {/* CTA */}
         <div
@@ -1954,8 +1970,7 @@ function EarnView() {
               Put capital to work
             </h3>
             <p className="mt-1.5 max-w-[260px] text-[13px] leading-relaxed text-white/80">
-              Earn up to {fmtPct(topApy)} APY supplying USDC. Withdraw anytime — fully
-              non-custodial.
+              Earn up to {fmtPct(topApy)} APY supplying USDC. Withdraw anytime, fully non-custodial.
             </p>
           </div>
           <GlassButton
@@ -2032,7 +2047,7 @@ function EarnView() {
           })}
         </div>
         {/* earnings panel */}
-        <div className="flex flex-col gap-5 self-start rounded-2xl border border-hair/70 bg-white p-6 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
+        <div className="flex flex-col gap-5 rounded-2xl border border-hair/70 bg-white p-6 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
           <div className="flex items-center justify-between">
             <h2 className="font-sans text-[16px] font-bold tracking-tight text-ink">Earnings</h2>
             <span className="inline-flex items-center gap-1 rounded-full bg-[#e7f6ee] px-2.5 py-1 text-[11px] font-semibold text-[#0f9d6e]">
@@ -2074,7 +2089,7 @@ function EarnView() {
           </div>
 
           {/* projected */}
-          <div className="flex items-center justify-between rounded-xl bg-off px-4 py-3">
+          <div className="mt-auto flex items-center justify-between rounded-xl bg-off px-4 py-3">
             <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink-m">
               Projected 12-mo yield
             </span>
