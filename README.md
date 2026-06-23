@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img alt="status" src="https://img.shields.io/badge/status-local%20demo-dc2626">
+  <img alt="status" src="https://img.shields.io/badge/status-local%20%26%20fork%20demo-dc2626">
   <img alt="solidity" src="https://img.shields.io/badge/solidity-0.8.24-b91c1c">
   <img alt="foundry" src="https://img.shields.io/badge/built%20with-foundry-1f1f23">
   <img alt="license" src="https://img.shields.io/badge/license-all%20rights%20reserved-6b7280">
@@ -82,12 +82,24 @@ pnpm install
 
 ### 2. Run the stack
 
+**Local (clean chain, mock prices) — the default:**
+
 ```bash
 ./scripts/dev-up.sh --seed
 ```
 
-This starts anvil, deploys and wires every contract, seeds a realistic book (healthy, warning, and
-margin-call accounts), and launches all five services. Stop everything with `Ctrl-C`.
+**Mainnet fork (real Chainlink prices):** set a mainnet RPC URL, then pass `--fork`. The deploy wires
+the real `ChainlinkPriceOracle` against the live ETH/USD feed, so collateral valuation and account
+health move on the real market price.
+
+```bash
+cp .env.example .env          # then set MAINNET_RPC_URL (any mainnet RPC; a free public one works)
+./scripts/dev-up.sh --fork --seed
+```
+
+Either way the script starts anvil, deploys and wires every contract, seeds a realistic book
+(healthy, warning, and margin-call accounts), and launches all five services. Stop everything with
+`Ctrl-C`.
 
 ### 3. Start the web app
 
@@ -116,6 +128,9 @@ cd contracts
 forge script script/Seed.s.sol:SeedScript --sig "crash()" \
   --rpc-url http://127.0.0.1:8545 --broadcast
 ```
+
+On a fork, `crash()` simulates the drop by repointing the oracle's feed to a low mock aggregator (a
+real Chainlink feed can't be moved), so the liquidation cascade works on real-price infrastructure too.
 
 ### Contracts workflow
 
@@ -167,17 +182,18 @@ The protocol and the off-chain services are built and run end to end on a local 
   (open/borrow/repay/add/withdraw/lever/close) signing straight to chain.
 - Local stack — one command boots a clean local chain with a seeded book and a price-crash
   entrypoint that drives a full liquidation cascade.
+- Real-price fork mode — `--fork` runs the whole stack against a mainnet fork, pricing collateral
+  from the **live Chainlink ETH/USD feed**, with a fork-aware crash that drives a real-price
+  liquidation cascade.
 
-**Current stage:** local demo, pre-audit. The system runs on mock tokens, a mock swap venue, and a
-settable mock price. It is not deployed to mainnet and must not be used with real funds.
+**Current stage:** local and mainnet-fork demo, pre-audit. Tokens and the swap venue are still mocks;
+fork mode adds real Chainlink prices. It is not deployed to mainnet and must not be used with real funds.
 
 ## Roadmap
 
 Most of what is next is gated by a real environment or an external phase, not by missing protocol
 logic — the contracts are written interface-first for exactly these steps.
 
-- **Real-price oracle** — wire the price oracle to live Chainlink feeds (it already speaks the
-  aggregator interface) and run the stack against a mainnet fork for real valuations and health.
 - **Real swaps against live DEX liquidity** — point the Uniswap/Curve adapters at real routers/pools
   on a fork or mainnet (the adapters already take the venue address). Also removes the close-out
   interest dust seen with the one-way mock router.
