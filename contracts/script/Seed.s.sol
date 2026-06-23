@@ -7,8 +7,10 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {CreditManager} from "../src/CreditManager.sol";
 import {Pool} from "../src/Pool.sol";
 import {UniswapV3Adapter} from "../src/adapters/UniswapV3Adapter.sol";
+import {ChainlinkPriceOracle} from "../src/ChainlinkPriceOracle.sol";
 import {MockERC20} from "../test/mocks/MockERC20.sol";
 import {MockPriceOracle} from "../test/mocks/MockPriceOracle.sol";
+import {MockAggregator} from "../test/mocks/MockAggregator.sol";
 
 /// @title SeedScript
 /// @notice Populates a LIVE local deployment (addresses read from the manifest) with a realistic
@@ -65,10 +67,20 @@ contract SeedScript is Script {
     }
 
     /// @notice Crashes the WETH price below the floor so the levered accounts become liquidatable.
+    /// @dev On a clean local node the oracle is settable, so we just lower the price. On a mainnet
+    ///      fork (USE_CHAINLINK=1) the real Chainlink feed can't be moved, so we simulate the drop by
+    ///      repointing the oracle's WETH feed to a low mock aggregator (owner-gated, deployer signs).
     function crash() external {
         Addrs memory a = _readManifest();
-        vm.broadcast(DEPLOYER_PK);
-        MockPriceOracle(a.oracle).setPrice(a.weth, CRASH_PRICE);
+        if (vm.envOr("USE_CHAINLINK", false)) {
+            vm.startBroadcast(DEPLOYER_PK);
+            MockAggregator crashed = new MockAggregator(8, int256(CRASH_PRICE * 1e2), block.timestamp);
+            ChainlinkPriceOracle(a.oracle).setFeed(a.weth, crashed, 7 days);
+            vm.stopBroadcast();
+        } else {
+            vm.broadcast(DEPLOYER_PK);
+            MockPriceOracle(a.oracle).setPrice(a.weth, CRASH_PRICE);
+        }
         console2.log("Crashed WETH price to (USDC, 6dp)", CRASH_PRICE);
     }
 

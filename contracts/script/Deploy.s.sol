@@ -13,6 +13,8 @@ import {MarginAccount} from "../src/MarginAccount.sol";
 import {Pool} from "../src/Pool.sol";
 import {RiskConfigurator} from "../src/RiskConfigurator.sol";
 import {WhitelistRegistry} from "../src/WhitelistRegistry.sol";
+import {ChainlinkPriceOracle} from "../src/ChainlinkPriceOracle.sol";
+import {IChainlinkAggregator} from "../src/interfaces/IChainlinkAggregator.sol";
 import {UniswapV3Adapter} from "../src/adapters/UniswapV3Adapter.sol";
 import {Guardian} from "../src/governance/Guardian.sol";
 import {RiskParams} from "../src/libraries/RiskParams.sol";
@@ -93,11 +95,32 @@ contract DeployScript is Script {
     function _deploy(Config memory config, address deployer) internal returns (Deployment memory d) {
         require(block.chainid == LOCAL_CHAIN_ID, "DeployScript: only the local profile is implemented");
 
-        // --- Mock assets and oracle (local only) ---
+        // --- Mock assets (local only) ---
         d.usdc = address(new MockERC20("USD Coin", "USDC", 6));
         d.weth = address(new MockERC20("Wrapped Ether", "WETH", 18));
-        d.oracle = address(new MockPriceOracle());
-        MockPriceOracle(d.oracle).setPrice(d.weth, config.wethPriceInUsdc);
+
+        // --- Oracle ---
+        // Default: a settable mock price. On a mainnet fork (USE_CHAINLINK=1, ETH_USD_FEED=<feed>),
+        // deploy the real ChainlinkPriceOracle and read WETH from the live feed. The mock router's
+        // rate is derived from config.wethPriceInUsdc, so we also pin that to the live price here to
+        // keep valuation and the local swap venue consistent.
+        if (vm.envOr("USE_CHAINLINK", false)) {
+            address feed = vm.envAddress("ETH_USD_FEED");
+            uint8 feedDecimals = IChainlinkAggregator(feed).decimals();
+            (, int256 answer,,,) = IChainlinkAggregator(feed).latestRoundData();
+            require(answer > 0, "DeployScript: bad ETH/USD feed");
+            // Normalise the feed answer to the unit of account (USDC, 6 decimals).
+            // answer > 0 is checked above, so the cast cannot truncate or wrap.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            config.wethPriceInUsdc = (uint256(answer) * 1e6) / (10 ** feedDecimals);
+
+            ChainlinkPriceOracle oracle = new ChainlinkPriceOracle(deployer, 6);
+            oracle.setFeed(d.weth, IChainlinkAggregator(feed), 7 days);
+            d.oracle = address(oracle);
+        } else {
+            d.oracle = address(new MockPriceOracle());
+            MockPriceOracle(d.oracle).setPrice(d.weth, config.wethPriceInUsdc);
+        }
 
         // --- Risk parameters ---
         d.riskConfigurator = address(new RiskConfigurator(deployer));

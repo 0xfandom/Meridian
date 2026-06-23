@@ -23,10 +23,12 @@ cd "$ROOT"
 
 # --- Flags -----------------------------------------------------------------------------
 SEED=false
+FORK=false
 for arg in "$@"; do
   case "$arg" in
     --seed) SEED=true ;;
-    *) echo "unknown flag: $arg (supported: --seed)" >&2; exit 1 ;;
+    --fork) FORK=true ;;
+    *) echo "unknown flag: $arg (supported: --seed, --fork)" >&2; exit 1 ;;
   esac
 done
 
@@ -99,11 +101,21 @@ if [ -z "$PYTHON_BIN" ]; then
 fi
 
 # --- 1. Local chain --------------------------------------------------------------------
-echo "[1/4] starting anvil ($RPC_URL, chain id $CHAIN_ID)..."
-anvil --chain-id "$CHAIN_ID" >"$ANVIL_LOG" 2>&1 &
+# Default: a clean local chain with mock prices. With --fork, fork mainnet so the deploy can wire
+# the real ChainlinkPriceOracle against a live feed (the deploy reads USE_CHAINLINK / ETH_USD_FEED).
+if [ "$FORK" = true ]; then
+  : "${MAINNET_RPC_URL:?--fork needs MAINNET_RPC_URL set (copy .env.example to .env, see scripts/dev-fork.sh)}"
+  ETH_USD_FEED="${ETH_USD_FEED:-0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419}"
+  export USE_CHAINLINK=1 ETH_USD_FEED
+  echo "[1/4] starting anvil mainnet fork ($RPC_URL, chain id $CHAIN_ID, real Chainlink prices)..."
+  anvil --fork-url "$MAINNET_RPC_URL" --chain-id "$CHAIN_ID" >"$ANVIL_LOG" 2>&1 &
+else
+  echo "[1/4] starting anvil ($RPC_URL, chain id $CHAIN_ID)..."
+  anvil --chain-id "$CHAIN_ID" >"$ANVIL_LOG" 2>&1 &
+fi
 PIDS+=("$!")
 
-for _ in $(seq 1 50); do
+for _ in $(seq 1 90); do
   if cast block-number --rpc-url "$RPC_URL" >/dev/null 2>&1; then break; fi
   sleep 0.2
 done
