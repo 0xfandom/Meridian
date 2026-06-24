@@ -9,5 +9,8 @@
   "slope2Bps": 6000,
   "optimalUtilizationBps": 8000,
   "wethHaircutBps": 1000,
-  "wethMaxLeverageBps": 50000
+  "wethMaxLeverageBps": 50000,
+  "linkPriceInUsdc": 8000000,
+  "linkHaircutBps": 2000,
+  "linkMaxLeverageBps": 30000
 }

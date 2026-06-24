@@ -106,7 +106,8 @@ fi
 if [ "$FORK" = true ]; then
   : "${MAINNET_RPC_URL:?--fork needs MAINNET_RPC_URL set (copy .env.example to .env, see scripts/dev-fork.sh)}"
   ETH_USD_FEED="${ETH_USD_FEED:-0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419}"
-  export USE_CHAINLINK=1 ETH_USD_FEED
+  LINK_USD_FEED="${LINK_USD_FEED:-0x2c1d072e956AFFC0D435Cb7AC38EF18d24d9127c}"
+  export USE_CHAINLINK=1 ETH_USD_FEED LINK_USD_FEED
   echo "[1/4] starting anvil mainnet fork ($RPC_URL, chain id $CHAIN_ID, real Chainlink prices)..."
   anvil --fork-url "$MAINNET_RPC_URL" --chain-id "$CHAIN_ID" >"$ANVIL_LOG" 2>&1 &
 else

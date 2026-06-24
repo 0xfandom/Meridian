@@ -51,6 +51,22 @@ contract DeployScriptTest is Test {
         assertTrue(AccessController(d.accessController).isKeeper(LOCAL_KEEPER));
     }
 
+    function test_LinkMarketDeployedAndWired() public view {
+        // A distinct collateral and credit market from WETH, sharing the one USDC pool.
+        assertTrue(d.link != address(0) && d.link != d.weth);
+        assertTrue(d.linkCreditManager != address(0) && d.linkCreditManager != d.creditManager);
+        assertTrue(Pool(d.pool).isCreditManager(d.linkCreditManager));
+
+        CreditManager cm = CreditManager(d.linkCreditManager);
+        assertEq(cm.facade(), d.linkCreditFacade);
+        assertEq(cm.liquidationModule(), d.linkLiquidationModule);
+        assertEq(address(cm.guardian()), d.guardian);
+        assertEq(address(cm.whitelistRegistry()), d.whitelistRegistry);
+        // LINK haircut is 2000 bps, so the liquidation threshold is 10000 - 2000 = 8000.
+        assertEq(cm.liquidationThresholdBps(), 8000);
+        assertEq(MockPriceOracle(d.oracle).getPrice(d.link), 8_000_000);
+    }
+
     /// @notice The manifest round-trips: writing it and parsing it back yields the same addresses and
     ///         chain metadata the services need to start with no manual address entry.
     function test_ManifestRoundTrips() public {
@@ -66,6 +82,13 @@ contract DeployScriptTest is Test {
         assertEq(vm.parseJsonAddress(json, ".pool"), d.pool);
         assertEq(vm.parseJsonAddress(json, ".creditManager"), d.creditManager);
         assertEq(vm.parseJsonAddress(json, ".liquidationModule"), d.liquidationModule);
+
+        // The markets array carries every market as real JSON objects.
+        assertEq(vm.parseJsonString(json, ".markets[0].symbol"), "WETH");
+        assertEq(vm.parseJsonAddress(json, ".markets[0].creditManager"), d.creditManager);
+        assertEq(vm.parseJsonString(json, ".markets[1].symbol"), "LINK");
+        assertEq(vm.parseJsonAddress(json, ".markets[1].creditManager"), d.linkCreditManager);
+        assertEq(vm.parseJsonAddress(json, ".markets[1].collateralToken"), d.link);
 
         vm.removeFile(path);
     }

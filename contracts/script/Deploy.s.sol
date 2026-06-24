@@ -32,14 +32,20 @@ import {MockSwapRouter} from "../test/mocks/MockSwapRouter.sol";
 
 /// @title DeployScript
 /// @notice Deploys the full Meridian system and applies every wiring step. The local profile
-///         (chain id 31337) deploys mock USDC, WETH, and a settable oracle so the system is
+///         (chain id 31337) deploys mock USDC, WETH, LINK, and a settable oracle so the system is
 ///         self-contained on a vanilla anvil node; public networks supply real token and feed
 ///         addresses via config and are a follow-up.
+/// @dev The system is multi-market: one shared USDC pool, oracle, and risk configurator, with one
+///      credit market (CreditManager + CreditFacade + LiquidationModule + mock DEX) per collateral
+///      asset. WETH and LINK ship by default; adding another 18-decimal collateral is a config + one
+///      _deployMarket call. Collateral is assumed 18-decimal because CreditManager values it against
+///      WAD; an 8-decimal asset (e.g. WBTC) would need a decimals-aware valuation first.
 /// @dev Run locally with: forge script script/Deploy.s.sol:DeployScript
 ///      Broadcast to anvil with: forge script script/Deploy.s.sol:DeployScript \
 ///        --rpc-url http://127.0.0.1:8545 --broadcast --private-key <anvil_key>
 contract DeployScript is Script {
     uint256 internal constant LOCAL_CHAIN_ID = 31_337;
+    uint256 internal constant COLLATERAL_WAD = 1e18; // every collateral is 18-decimal (see contract note)
 
     struct Config {
         address keeper;
@@ -53,24 +59,48 @@ contract DeployScript is Script {
         uint256 optimalUtilizationBps;
         uint256 wethHaircutBps;
         uint256 wethMaxLeverageBps;
+        uint256 linkPriceInUsdc;
+        uint256 linkHaircutBps;
+        uint256 linkMaxLeverageBps;
+    }
+
+    /// @dev One credit market bound to a single collateral asset. The pool, oracle, and risk
+    ///      configurator are shared across markets. Used only as a local return/serialisation type;
+    ///      Deployment stores the addresses flat so it can be copied to storage in tests.
+    struct Market {
+        string symbol;
+        address collateralToken;
+        address creditManager;
+        address creditFacade;
+        address liquidationModule;
+        address swapRouter;
+        address swapAdapter;
     }
 
     struct Deployment {
         address usdc;
-        address weth;
         address oracle;
         address interestRateModel;
         address pool;
         address riskConfigurator;
         address accountImplementation;
-        address creditManager;
-        address creditFacade;
         address guardian;
         address whitelistRegistry;
         address accessController;
+        // Primary (WETH) market; the flat fields are also what the off-chain services read today.
+        address weth;
+        address creditManager;
+        address creditFacade;
         address liquidationModule;
         address swapRouter;
         address swapAdapter;
+        // LINK market.
+        address link;
+        address linkCreditManager;
+        address linkCreditFacade;
+        address linkLiquidationModule;
+        address linkSwapRouter;
+        address linkSwapAdapter;
     }
 
     function run() external returns (Deployment memory deployment) {
@@ -95,38 +125,35 @@ contract DeployScript is Script {
     function _deploy(Config memory config, address deployer) internal returns (Deployment memory d) {
         require(block.chainid == LOCAL_CHAIN_ID, "DeployScript: only the local profile is implemented");
 
-        // --- Mock assets (local only) ---
+        // --- Mock collateral assets (local only); both 18-decimal ---
         d.usdc = address(new MockERC20("USD Coin", "USDC", 6));
         d.weth = address(new MockERC20("Wrapped Ether", "WETH", 18));
+        d.link = address(new MockERC20("Chainlink", "LINK", 18));
 
-        // --- Oracle ---
-        // Default: a settable mock price. On a mainnet fork (USE_CHAINLINK=1, ETH_USD_FEED=<feed>),
-        // deploy the real ChainlinkPriceOracle and read WETH from the live feed. The mock router's
-        // rate is derived from config.wethPriceInUsdc, so we also pin that to the live price here to
-        // keep valuation and the local swap venue consistent.
+        // --- Oracle (shared) ---
+        // Default: a settable mock price. On a mainnet fork (USE_CHAINLINK=1) deploy the real
+        // ChainlinkPriceOracle and read each collateral from its live feed (ETH_USD_FEED,
+        // LINK_USD_FEED). The mock routers' rates derive from the *PriceInUsdc config values, so we
+        // pin those to the live prices here to keep valuation and the local swap venues consistent.
         if (vm.envOr("USE_CHAINLINK", false)) {
-            address feed = vm.envAddress("ETH_USD_FEED");
-            uint8 feedDecimals = IChainlinkAggregator(feed).decimals();
-            (, int256 answer,,,) = IChainlinkAggregator(feed).latestRoundData();
-            require(answer > 0, "DeployScript: bad ETH/USD feed");
-            // Normalise the feed answer to the unit of account (USDC, 6 decimals).
-            // answer > 0 is checked above, so the cast cannot truncate or wrap.
-            // forge-lint: disable-next-line(unsafe-typecast)
-            config.wethPriceInUsdc = (uint256(answer) * 1e6) / (10 ** feedDecimals);
-
             ChainlinkPriceOracle oracle = new ChainlinkPriceOracle(deployer, 6);
-            oracle.setFeed(d.weth, IChainlinkAggregator(feed), 7 days);
+            config.wethPriceInUsdc = _wireFeed(oracle, d.weth, vm.envAddress("ETH_USD_FEED"));
+            config.linkPriceInUsdc = _wireFeed(oracle, d.link, vm.envAddress("LINK_USD_FEED"));
             d.oracle = address(oracle);
         } else {
-            d.oracle = address(new MockPriceOracle());
-            MockPriceOracle(d.oracle).setPrice(d.weth, config.wethPriceInUsdc);
+            MockPriceOracle oracle = new MockPriceOracle();
+            oracle.setPrice(d.weth, config.wethPriceInUsdc);
+            oracle.setPrice(d.link, config.linkPriceInUsdc);
+            d.oracle = address(oracle);
         }
 
-        // --- Risk parameters ---
+        // --- Risk (shared thresholds + IRM, plus per-collateral parameters) ---
         d.riskConfigurator = address(new RiskConfigurator(deployer));
-        _configureRisk(RiskConfigurator(d.riskConfigurator), config, d.weth);
+        _configureRisk(RiskConfigurator(d.riskConfigurator), config);
+        RiskConfigurator(d.riskConfigurator).setCollateral(d.weth, config.wethHaircutBps, config.wethMaxLeverageBps);
+        RiskConfigurator(d.riskConfigurator).setCollateral(d.link, config.linkHaircutBps, config.linkMaxLeverageBps);
 
-        // --- Core ---
+        // --- Core shared infrastructure ---
         d.interestRateModel = address(
             new InterestRateModel(config.baseRateBps, config.slope1Bps, config.slope2Bps, config.optimalUtilizationBps)
         );
@@ -134,53 +161,104 @@ contract DeployScript is Script {
             new Pool(IERC20(d.usdc), IInterestRateModel(d.interestRateModel), deployer, "Meridian USDC Pool", "mUSDC")
         );
         d.accountImplementation = address(new MarginAccount());
-        d.creditManager = address(
-            new CreditManager(
-                IPool(d.pool),
-                IERC20(d.weth),
-                IInterestRateModel(d.interestRateModel),
-                IPriceOracle(d.oracle),
-                IRiskConfigurator(d.riskConfigurator),
-                d.accountImplementation,
-                deployer
-            )
-        );
-        d.creditFacade = address(new CreditFacade(CreditManager(d.creditManager)));
 
-        // --- Safety and access ---
+        // --- Safety and access (shared) ---
         d.guardian = address(new Guardian(deployer, deployer));
         d.whitelistRegistry = address(new WhitelistRegistry(deployer));
         d.accessController = address(new AccessController(deployer));
-        d.liquidationModule = address(
-            new LiquidationModule(AccessController(d.accessController), ILiquidationTarget(d.creditManager), deployer)
+        Pool(d.pool).setGuardian(IGuardian(d.guardian));
+        AccessController(d.accessController).grantRole(AccessController.Role.Keeper, config.keeper);
+        // The USDC approve leg of the lever path is shared by every market's adapter.
+        WhitelistRegistry(d.whitelistRegistry).setTarget(d.usdc, true);
+        WhitelistRegistry(d.whitelistRegistry).setSelector(d.usdc, IERC20.approve.selector, true);
+
+        // --- Markets (one credit market per collateral, sharing the infrastructure above) ---
+        Market memory weth = _deployMarket(d, "WETH", d.weth, deployer, config.wethPriceInUsdc);
+        d.creditManager = weth.creditManager;
+        d.creditFacade = weth.creditFacade;
+        d.liquidationModule = weth.liquidationModule;
+        d.swapRouter = weth.swapRouter;
+        d.swapAdapter = weth.swapAdapter;
+
+        Market memory link = _deployMarket(d, "LINK", d.link, deployer, config.linkPriceInUsdc);
+        d.linkCreditManager = link.creditManager;
+        d.linkCreditFacade = link.creditFacade;
+        d.linkLiquidationModule = link.liquidationModule;
+        d.linkSwapRouter = link.swapRouter;
+        d.linkSwapAdapter = link.swapAdapter;
+    }
+
+    /// @notice Reads a Chainlink feed, registers it on the oracle for `token`, and returns the live
+    ///         price normalised to the unit of account (USDC, 6 decimals) for the local DEX rate.
+    function _wireFeed(ChainlinkPriceOracle oracle, address token, address feed)
+        internal
+        returns (uint256 priceInUsdc)
+    {
+        uint8 feedDecimals = IChainlinkAggregator(feed).decimals();
+        (, int256 answer,,,) = IChainlinkAggregator(feed).latestRoundData();
+        require(answer > 0, "DeployScript: bad price feed");
+        // answer > 0 is checked above, so the cast cannot truncate or wrap.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        priceInUsdc = (uint256(answer) * 1e6) / (10 ** feedDecimals);
+        oracle.setFeed(token, IChainlinkAggregator(feed), 7 days);
+    }
+
+    /// @notice Deploys and fully wires one credit market for `collateralToken`: a CreditManager bound
+    ///         to the shared pool/oracle/risk configurator, its CreditFacade and LiquidationModule, and
+    ///         a mock DEX (router + Uniswap adapter) so the market is leverage-capable locally. The
+    ///         borrowed-USDC -> collateral lever path is whitelisted exactly as the live system would.
+    /// @dev Collateral is assumed 18-decimal, so the mock router rate converts 6-dp USDC into 18-dp
+    ///      collateral at the oracle price; this matches CreditManager's WAD-based valuation.
+    function _deployMarket(
+        Deployment memory d,
+        string memory symbol,
+        address collateralToken,
+        address deployer,
+        uint256 priceInUsdc
+    ) internal returns (Market memory m) {
+        CreditManager cm = new CreditManager(
+            IPool(d.pool),
+            IERC20(collateralToken),
+            IInterestRateModel(d.interestRateModel),
+            IPriceOracle(d.oracle),
+            IRiskConfigurator(d.riskConfigurator),
+            d.accountImplementation,
+            deployer
         );
+        CreditFacade facade = new CreditFacade(cm);
+        LiquidationModule liquidation =
+            new LiquidationModule(AccessController(d.accessController), ILiquidationTarget(address(cm)), deployer);
 
-        // --- Mock DEX so the local deployment is leverage-capable (local only) ---
-        _deployLocalDex(d, config);
-
-        _wire(d, config.keeper);
-    }
-
-    /// @notice Deploys a mock swap router and the Uniswap adapter, funds the router, and whitelists
-    ///         the lever path so a fresh local deployment can take on leverage exactly as the live
-    ///         system would: borrowed USDC swapped into WETH collateral through the gated multicall.
-    function _deployLocalDex(Deployment memory d, Config memory config) internal {
+        // Mock DEX: pays out `collateralToken` for USDC at the oracle price, from its own reserves.
         MockSwapRouter router = new MockSwapRouter();
-        // amountOut = amountIn * rateWad / 1e18; convert 6-dp USDC into 18-dp WETH at the oracle price.
-        router.setRate((1e18 * 1e18) / config.wethPriceInUsdc);
-        MockERC20(d.weth).mint(address(router), 1_000_000e18); // reserves to pay out swaps
-        d.swapRouter = address(router);
+        router.setRate((COLLATERAL_WAD * 1e18) / priceInUsdc);
+        MockERC20(collateralToken).mint(address(router), 1_000_000e18);
+        UniswapV3Adapter adapter = new UniswapV3Adapter(IUniswapV3SwapRouter(address(router)));
 
-        d.swapAdapter = address(new UniswapV3Adapter(IUniswapV3SwapRouter(d.swapRouter)));
+        // Wire the credit manager to the shared safety/governance modules.
+        Pool(d.pool).setCreditManager(address(cm), true);
+        cm.setFacade(address(facade));
+        cm.setGuardian(IGuardian(d.guardian));
+        cm.setWhitelistRegistry(IWhitelistRegistry(d.whitelistRegistry));
+        cm.setLiquidationModule(address(liquidation));
 
+        // Whitelist this market's lever leg (USDC approve is whitelisted once, globally).
         WhitelistRegistry whitelist = WhitelistRegistry(d.whitelistRegistry);
-        whitelist.setTarget(d.usdc, true);
-        whitelist.setSelector(d.usdc, IERC20.approve.selector, true);
-        whitelist.setTarget(d.swapAdapter, true);
-        whitelist.setSelector(d.swapAdapter, UniswapV3Adapter.swapExactInputSingle.selector, true);
+        whitelist.setTarget(address(adapter), true);
+        whitelist.setSelector(address(adapter), UniswapV3Adapter.swapExactInputSingle.selector, true);
+
+        m = Market({
+            symbol: symbol,
+            collateralToken: collateralToken,
+            creditManager: address(cm),
+            creditFacade: address(facade),
+            liquidationModule: address(liquidation),
+            swapRouter: address(router),
+            swapAdapter: address(adapter)
+        });
     }
 
-    function _configureRisk(RiskConfigurator riskConfigurator, Config memory config, address weth) internal {
+    function _configureRisk(RiskConfigurator riskConfigurator, Config memory config) internal {
         riskConfigurator.setThresholds(
             RiskParams.HealthThresholds({
                 warningBps: config.warningBps,
@@ -196,25 +274,13 @@ contract DeployScript is Script {
                 optimalUtilizationBps: config.optimalUtilizationBps
             })
         );
-        riskConfigurator.setCollateral(weth, config.wethHaircutBps, config.wethMaxLeverageBps);
-    }
-
-    function _wire(Deployment memory d, address keeper) internal {
-        Pool(d.pool).setCreditManager(d.creditManager, true);
-        Pool(d.pool).setGuardian(IGuardian(d.guardian));
-
-        CreditManager creditManager = CreditManager(d.creditManager);
-        creditManager.setFacade(d.creditFacade);
-        creditManager.setGuardian(IGuardian(d.guardian));
-        creditManager.setWhitelistRegistry(IWhitelistRegistry(d.whitelistRegistry));
-        creditManager.setLiquidationModule(d.liquidationModule);
-
-        AccessController(d.accessController).grantRole(AccessController.Role.Keeper, keeper);
     }
 
     /// @notice Writes deployments/<network>.json with the chain id, deploy block, and every contract
     ///         address. This manifest is the single source of truth the off-chain services read so no
     ///         address is ever entered by hand. The file is a generated artifact and is gitignored.
+    /// @dev The flat top-level fields describe the primary market for back-compat; the `markets` array
+    ///      lists every market. Services read the flat fields until they migrate to the array.
     function writeManifest(string memory network, Deployment memory d, uint256 startBlock) public {
         string memory obj = "meridian";
         vm.serializeString(obj, "network", network);
@@ -235,7 +301,54 @@ contract DeployScript is Script {
         vm.serializeAddress(obj, "liquidationModule", d.liquidationModule);
         vm.serializeAddress(obj, "swapRouter", d.swapRouter);
         string memory json = vm.serializeAddress(obj, "swapAdapter", d.swapAdapter);
-        vm.writeJson(json, string.concat("deployments/", network, ".json"));
+
+        string memory path = string.concat("deployments/", network, ".json");
+        vm.writeJson(json, path);
+
+        // Inject the markets array as real JSON objects (vm.serialize on a string[] would escape them).
+        Market[] memory markets = _markets(d);
+        string memory marketsJson = "[";
+        for (uint256 i = 0; i < markets.length; i++) {
+            if (i > 0) marketsJson = string.concat(marketsJson, ",");
+            marketsJson = string.concat(marketsJson, _serializeMarket(markets[i], i));
+        }
+        marketsJson = string.concat(marketsJson, "]");
+        vm.writeJson(marketsJson, path, ".markets");
+    }
+
+    /// @dev Rebuilds the market list from the flat Deployment fields for serialisation and logging.
+    function _markets(Deployment memory d) internal pure returns (Market[] memory markets) {
+        markets = new Market[](2);
+        markets[0] = Market({
+            symbol: "WETH",
+            collateralToken: d.weth,
+            creditManager: d.creditManager,
+            creditFacade: d.creditFacade,
+            liquidationModule: d.liquidationModule,
+            swapRouter: d.swapRouter,
+            swapAdapter: d.swapAdapter
+        });
+        markets[1] = Market({
+            symbol: "LINK",
+            collateralToken: d.link,
+            creditManager: d.linkCreditManager,
+            creditFacade: d.linkCreditFacade,
+            liquidationModule: d.linkLiquidationModule,
+            swapRouter: d.linkSwapRouter,
+            swapAdapter: d.linkSwapAdapter
+        });
+    }
+
+    function _serializeMarket(Market memory m, uint256 i) internal returns (string memory) {
+        string memory key = string.concat("market", vm.toString(i));
+        vm.serializeString(key, "symbol", m.symbol);
+        vm.serializeUint(key, "decimals", uint256(18));
+        vm.serializeAddress(key, "collateralToken", m.collateralToken);
+        vm.serializeAddress(key, "creditManager", m.creditManager);
+        vm.serializeAddress(key, "creditFacade", m.creditFacade);
+        vm.serializeAddress(key, "liquidationModule", m.liquidationModule);
+        vm.serializeAddress(key, "swapRouter", m.swapRouter);
+        return vm.serializeAddress(key, "swapAdapter", m.swapAdapter);
     }
 
     function _readConfig(string memory network) internal view returns (Config memory config) {
@@ -251,26 +364,34 @@ contract DeployScript is Script {
             slope2Bps: vm.parseJsonUint(json, ".slope2Bps"),
             optimalUtilizationBps: vm.parseJsonUint(json, ".optimalUtilizationBps"),
             wethHaircutBps: vm.parseJsonUint(json, ".wethHaircutBps"),
-            wethMaxLeverageBps: vm.parseJsonUint(json, ".wethMaxLeverageBps")
+            wethMaxLeverageBps: vm.parseJsonUint(json, ".wethMaxLeverageBps"),
+            linkPriceInUsdc: vm.parseJsonUint(json, ".linkPriceInUsdc"),
+            linkHaircutBps: vm.parseJsonUint(json, ".linkHaircutBps"),
+            linkMaxLeverageBps: vm.parseJsonUint(json, ".linkMaxLeverageBps")
         });
     }
 
     function _log(string memory network, Deployment memory d) internal pure {
         console2.log("Meridian deployment (network: %s)", network);
         console2.log("  USDC                ", d.usdc);
-        console2.log("  WETH                ", d.weth);
         console2.log("  PriceOracle         ", d.oracle);
         console2.log("  InterestRateModel   ", d.interestRateModel);
         console2.log("  Pool                ", d.pool);
         console2.log("  RiskConfigurator    ", d.riskConfigurator);
         console2.log("  MarginAccountImpl   ", d.accountImplementation);
-        console2.log("  CreditManager       ", d.creditManager);
-        console2.log("  CreditFacade        ", d.creditFacade);
         console2.log("  Guardian            ", d.guardian);
         console2.log("  WhitelistRegistry   ", d.whitelistRegistry);
         console2.log("  AccessController    ", d.accessController);
-        console2.log("  LiquidationModule   ", d.liquidationModule);
-        console2.log("  SwapRouter (mock)   ", d.swapRouter);
-        console2.log("  SwapAdapter         ", d.swapAdapter);
+        Market[] memory markets = _markets(d);
+        for (uint256 i = 0; i < markets.length; i++) {
+            Market memory m = markets[i];
+            console2.log("  -- market: %s --", m.symbol);
+            console2.log("    collateral        ", m.collateralToken);
+            console2.log("    CreditManager     ", m.creditManager);
+            console2.log("    CreditFacade      ", m.creditFacade);
+            console2.log("    LiquidationModule ", m.liquidationModule);
+            console2.log("    SwapRouter (mock) ", m.swapRouter);
+            console2.log("    SwapAdapter       ", m.swapAdapter);
+        }
     }
 }
