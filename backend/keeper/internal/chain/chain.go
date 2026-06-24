@@ -55,20 +55,31 @@ func (c *Client) From() common.Address { return c.from }
 // Eth exposes the underlying client for read-only helpers and tests.
 func (c *Client) Eth() *ethclient.Client { return c.eth }
 
-// HealthFactor reads CreditManager.calcHealthFactor(account) and returns it in WAD.
-func (c *Client) HealthFactor(ctx context.Context, account string) (*big.Int, error) {
+// HealthFactor reads calcHealthFactor(account) from the given market's credit manager and returns
+// it in WAD. An empty creditManager falls back to the client's default (the primary market).
+func (c *Client) HealthFactor(ctx context.Context, account, creditManager string) (*big.Int, error) {
+	target := c.creditManager
+	if creditManager != "" {
+		target = common.HexToAddress(creditManager)
+	}
 	data := append(append([]byte{}, healthSelector...), padAddress(common.HexToAddress(account))...)
-	out, err := c.eth.CallContract(ctx, ethereum.CallMsg{To: &c.creditManager, Data: data}, nil)
+	out, err := c.eth.CallContract(ctx, ethereum.CallMsg{To: &target, Data: data}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("calcHealthFactor: %w", err)
 	}
 	return new(big.Int).SetBytes(out), nil
 }
 
-// Liquidate submits LiquidationModule.liquidate(account) and returns the transaction hash.
-func (c *Client) Liquidate(ctx context.Context, account string) (string, error) {
+// Liquidate submits liquidate(account) to the given market's liquidation module and returns the
+// transaction hash. An empty liquidationModule falls back to the client's default (the primary
+// market).
+func (c *Client) Liquidate(ctx context.Context, account, liquidationModule string) (string, error) {
+	target := c.module
+	if liquidationModule != "" {
+		target = common.HexToAddress(liquidationModule)
+	}
 	data := append(append([]byte{}, liquidateSelector...), padAddress(common.HexToAddress(account))...)
-	return c.send(ctx, c.module, data)
+	return c.send(ctx, target, data)
 }
 
 func (c *Client) send(ctx context.Context, to common.Address, data []byte) (string, error) {
