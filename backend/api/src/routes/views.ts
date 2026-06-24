@@ -32,7 +32,9 @@ export interface MarketView {
   symbol: string;
   collateralToken: Address;
   creditManager: Address;
+  creditFacade: Address;
   liquidationModule: Address;
+  swapAdapter: Address;
   decimals: number;
   priceUsdc: bigint;
 }
@@ -43,7 +45,9 @@ export function marketViews(deployment: DeploymentInfo | null, state: ProtocolSt
     symbol: m.symbol,
     collateralToken: m.collateralToken,
     creditManager: m.creditManager,
+    creditFacade: m.creditFacade,
     liquidationModule: m.liquidationModule,
+    swapAdapter: m.swapAdapter,
     decimals: m.decimals,
     priceUsdc: state.prices?.[m.collateralToken] ?? 0n,
   }));

@@ -16,11 +16,11 @@ import {
   Wallet,
   X,
 } from "lucide-react";
+import type { MarketView } from "@/lib/api";
 import { useBorrowerAccount, type BorrowerAccount } from "@/lib/use-borrower-account";
 import { useCreditActions, type CreditActions, type CreditPhase } from "@/lib/use-credit-actions";
-import { useWalletBalances, type WalletBalances } from "@/lib/use-balances";
-
-const MAINTENANCE_LT = 0.9; // configured liquidation threshold, used only for the open-form estimate
+import { collateralByToken, useWalletBalances, type WalletBalances } from "@/lib/use-balances";
+import { useMarkets } from "@/lib/use-markets";
 
 function usd(n: number): string {
   if (!Number.isFinite(n)) return "—";
@@ -91,7 +91,7 @@ const MANAGE_BUTTONS: { kind: ManageKind; label: string; Icon: typeof Plus }[] =
 
 function PositionCard({ account }: { account: BorrowerAccount }) {
   const balances = useWalletBalances();
-  const actions = useCreditActions();
+  const actions = useCreditActions(account.market);
   const [manage, setManage] = useState<ManageKind | null>(null);
 
   const openManage = (kind: ManageKind) => {
@@ -102,7 +102,7 @@ function PositionCard({ account }: { account: BorrowerAccount }) {
   const metrics = [
     {
       k: "Collateral",
-      v: `${account.collateralWeth.toFixed(4)} WETH`,
+      v: `${account.collateral.toFixed(4)} ${account.symbol}`,
       sub: usd(account.collateralValue),
     },
     { k: "Debt", v: usd(account.debt), sub: "USDC drawn" },
@@ -118,9 +118,14 @@ function PositionCard({ account }: { account: BorrowerAccount }) {
             <h2 className="font-sans text-[16px] font-bold tracking-tight text-ink">
               Account overview
             </h2>
-            <span className="font-mono text-[11px] text-ink-f">
-              {account.account.slice(0, 6)}…{account.account.slice(-4)}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full border border-hair px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-m">
+                {account.symbol} market
+              </span>
+              <span className="font-mono text-[11px] text-ink-f">
+                {account.account.slice(0, 6)}…{account.account.slice(-4)}
+              </span>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-hair/70 bg-hair/70">
             {metrics.map((m) => (
@@ -203,10 +208,10 @@ function PositionCard({ account }: { account: BorrowerAccount }) {
   );
 }
 
-function managePhaseLabel(phase: CreditPhase): string {
+function managePhaseLabel(phase: CreditPhase, symbol: string): string {
   switch (phase) {
     case "approving":
-      return "Approving WETH…";
+      return `Approving ${symbol}…`;
     case "borrowing":
       return "Drawing credit…";
     case "repaying":
@@ -216,7 +221,7 @@ function managePhaseLabel(phase: CreditPhase): string {
     case "withdrawing":
       return "Withdrawing…";
     case "trading":
-      return "Swapping USDC → WETH…";
+      return `Swapping USDC → ${symbol}…`;
     case "closing":
       return "Closing…";
     default:
@@ -239,6 +244,8 @@ function ManageModal({
 }) {
   const [raw, setRaw] = useState("");
   const amt = parseFloat(raw) || 0;
+  const symbol = account.symbol;
+  const walletCollateral = collateralByToken(balances, account.collateralToken)?.amount ?? 0;
 
   const phase = actions.phase;
   const busy =
@@ -276,19 +283,19 @@ function ManageModal({
       title: "Lever up",
       unit: "USDC",
       max: account.usdcHeld,
-      hint: "Swaps the account's USDC into WETH collateral through the whitelisted Uniswap adapter — inside the account, never leaving it.",
+      hint: `Swaps the account's USDC into ${symbol} collateral through the whitelisted Uniswap adapter — inside the account, never leaving it.`,
       run: () => actions.lever(account.account, amt),
     },
     add: {
       title: "Add collateral",
-      unit: "WETH",
-      max: balances?.weth ?? 0,
+      unit: symbol,
+      max: walletCollateral,
       run: () => actions.addCollateral(account.account, amt),
     },
     withdraw: {
       title: "Withdraw collateral",
-      unit: "WETH",
-      max: account.collateralWeth,
+      unit: symbol,
+      max: account.collateral,
       run: () => actions.withdrawCollateral(account.account, amt),
     },
     close: {
@@ -299,6 +306,7 @@ function ManageModal({
   };
   const c = config[kind];
   const isClose = kind === "close";
+  const isToken = c.unit === symbol;
   const valid = isClose || (amt > 0 && (c.max === undefined || amt <= c.max));
   const overMax = !isClose && c.max !== undefined && amt > c.max;
 
@@ -326,15 +334,15 @@ function ManageModal({
           <p className="rounded-2xl border border-hair bg-off p-4 text-[13px] leading-relaxed text-ink-m">
             Repays the debt — principal plus accrued interest — from the {usd(account.usdcHeld)} the
             account holds, then returns the remaining balance and{" "}
-            {account.collateralWeth.toFixed(4)} WETH collateral to your wallet. The account must
-            hold enough to cover the interest.
+            {account.collateral.toFixed(4)} {symbol} collateral to your wallet. The account must hold
+            enough to cover the interest.
           </p>
         ) : (
           <div className="rounded-2xl border border-hair bg-off p-4">
             <div className="flex items-center justify-between font-mono text-[10.5px] uppercase tracking-[0.16em] text-ink-m">
               <span>Amount ({c.unit})</span>
               {c.max !== undefined && (
-                <span>Max: {c.unit === "WETH" ? c.max.toFixed(4) : usd(c.max)}</span>
+                <span>Max: {isToken ? c.max.toFixed(4) : usd(c.max)}</span>
               )}
             </div>
             <div className="mt-2 flex items-center gap-2">
@@ -372,7 +380,7 @@ function ManageModal({
           onClick={() => void c.run()}
           className="mt-5 w-full rounded-full bg-ink py-3.5 text-[15px] font-semibold text-white transition-colors hover:bg-red disabled:cursor-not-allowed disabled:bg-hair disabled:text-ink-f"
         >
-          {busy ? managePhaseLabel(phase) : c.title}
+          {busy ? managePhaseLabel(phase, symbol) : c.title}
         </button>
         {phase === "error" ? (
           <p className="mt-3 text-center font-mono text-[11px] text-red">
@@ -394,27 +402,47 @@ function ManageModal({
 
 function OpenAccountCard() {
   const balances = useWalletBalances();
-  const actions = useCreditActions();
+  const markets = useMarkets();
+  const [selectedToken, setSelectedToken] = useState<string | undefined>(undefined);
   const [collateralRaw, setCollateralRaw] = useState("");
   const [borrowRaw, setBorrowRaw] = useState("");
 
-  const walletWeth = balances?.weth ?? 0;
+  // Default the selected market to the first one once markets resolve.
+  useEffect(() => {
+    if (!selectedToken && markets && markets.length > 0) {
+      setSelectedToken(markets[0]!.collateralToken);
+    }
+  }, [markets, selectedToken]);
+
+  const market: MarketView | undefined =
+    markets?.find((m) => m.collateralToken === selectedToken) ?? markets?.[0];
+  const actions = useCreditActions(market);
+
+  const symbol = market?.symbol ?? "";
+  const walletCollateral = collateralByToken(balances, market?.collateralToken)?.amount ?? 0;
   const collateral = parseFloat(collateralRaw) || 0;
   const borrow = parseFloat(borrowRaw) || 0;
-  const validCollateral = collateral > 0 && collateral <= walletWeth;
-  const valid = validCollateral && borrow >= 0;
+  const validCollateral = collateral > 0 && collateral <= walletCollateral;
+  const valid = Boolean(market) && validCollateral && borrow >= 0;
 
   const phase = actions.phase;
   const busy = phase === "approving" || phase === "opening";
 
   const phaseLabel =
     phase === "approving"
-      ? "Approving WETH…"
+      ? `Approving ${symbol}…`
       : phase === "opening"
         ? "Opening account…"
         : phase === "success"
           ? "Opened"
           : "Open margin account";
+
+  // Reset the typed collateral when switching markets so a stale amount can't exceed the new wallet.
+  const selectMarket = (token: string) => {
+    setSelectedToken(token);
+    setCollateralRaw("");
+    actions.reset();
+  };
 
   return (
     <div className="grid gap-3 lg:grid-cols-[1.4fr_1fr]">
@@ -427,28 +455,59 @@ function OpenAccountCard() {
             <h2 className="font-sans text-[16px] font-bold tracking-tight text-ink">
               Open a margin account
             </h2>
-            <p className="text-[12.5px] text-ink-m">Post WETH collateral and draw USDC credit.</p>
+            <p className="text-[12.5px] text-ink-m">
+              Pick a collateral market, post collateral and draw USDC credit.
+            </p>
+          </div>
+        </div>
+
+        {/* market selector */}
+        <div>
+          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-f">
+            Collateral market
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(markets ?? []).map((m) => {
+              const active = m.collateralToken === market?.collateralToken;
+              return (
+                <button
+                  key={m.collateralToken}
+                  onClick={() => selectMarket(m.collateralToken)}
+                  disabled={busy}
+                  className={`rounded-full border px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors disabled:cursor-not-allowed ${
+                    active
+                      ? "border-ink bg-ink text-white"
+                      : "border-hair text-ink hover:border-ink hover:bg-off"
+                  }`}
+                >
+                  {m.symbol}
+                </button>
+              );
+            })}
+            {!markets && (
+              <span className="font-mono text-[12px] text-ink-f">Loading markets…</span>
+            )}
           </div>
         </div>
 
         <Field
-          label="Collateral (WETH)"
-          aside={`Wallet: ${walletWeth.toFixed(4)}`}
+          label={`Collateral (${symbol || "—"})`}
+          aside={`Wallet: ${walletCollateral.toFixed(4)}`}
           value={collateralRaw}
           onChange={setCollateralRaw}
-          onMax={() => setCollateralRaw(String(walletWeth))}
-          disabled={busy}
+          onMax={() => setCollateralRaw(String(walletCollateral))}
+          disabled={busy || !market}
         />
         <Field
           label="Borrow (USDC)"
           aside="Drawn from the pool"
           value={borrowRaw}
           onChange={setBorrowRaw}
-          disabled={busy}
+          disabled={busy || !market}
         />
 
-        {collateral > walletWeth && (
-          <p className="font-mono text-[12px] text-red">Exceeds wallet WETH balance.</p>
+        {collateral > walletCollateral && (
+          <p className="font-mono text-[12px] text-red">Exceeds wallet {symbol} balance.</p>
         )}
 
         <button
@@ -479,21 +538,30 @@ function OpenAccountCard() {
         <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-f">
           <TrendingUp size={13} /> Estimate
         </div>
-        <Estimate collateral={collateral} borrow={borrow} />
+        <Estimate collateral={collateral} borrow={borrow} symbol={symbol || "collateral"} />
       </div>
     </div>
   );
 }
 
-function Estimate({ collateral, borrow }: { collateral: number; borrow: number }) {
+function Estimate({
+  collateral,
+  borrow,
+  symbol,
+}: {
+  collateral: number;
+  borrow: number;
+  symbol: string;
+}) {
   // A pre-open guide only: the borrowed USDC stays in the account, so the account is healthy as long
-  // as (collateral value + borrow) x LT >= debt. The contract enforces the real check on open.
+  // as (collateral value + borrow) after the market haircut covers the debt. The contract enforces
+  // the real check on open.
   const rows = [
-    { k: "Collateral", v: `${collateral.toFixed(4)} WETH` },
+    { k: "Collateral", v: `${collateral.toFixed(4)} ${symbol}` },
     { k: "Borrow", v: usd(borrow) },
     {
       k: "Health rule",
-      v: borrow > 0 && collateral > 0 ? `value × ${MAINTENANCE_LT} ≥ debt` : "no debt",
+      v: borrow > 0 && collateral > 0 ? "value after haircut ≥ debt" : "no debt",
     },
   ];
   return (

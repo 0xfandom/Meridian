@@ -68,13 +68,23 @@ describe("loadDeployment", () => {
       startBlock: 0,
       pool: POOL,
       markets: [
-        { symbol: "WETH", decimals: 18, collateralToken: USDC, creditManager: POOL, liquidationModule: USDC },
+        {
+          symbol: "WETH",
+          decimals: 18,
+          collateralToken: USDC,
+          creditManager: POOL,
+          creditFacade: USDC,
+          liquidationModule: POOL,
+          swapAdapter: USDC,
+        },
       ],
     });
     const info = loadDeployment(path);
     expect(info?.markets).toHaveLength(1);
     expect(info?.markets[0]?.symbol).toBe("WETH");
     expect(info?.markets[0]?.collateralToken).toBe(USDC);
+    expect(info?.markets[0]?.creditFacade).toBe(USDC);
+    expect(info?.markets[0]?.swapAdapter).toBe(USDC);
     expect(info?.markets[0]?.decimals).toBe(18);
   });
 
