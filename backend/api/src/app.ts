@@ -13,6 +13,7 @@ import {
   findAccount,
   isAddress,
   liquidationList,
+  marketViews,
   openPositions,
   poolView,
 } from "./routes/views.js";
@@ -40,6 +41,8 @@ export function createApp(deps: AppDeps): Hono {
   app.get("/health", (c) => json(c, { status: "ok", lastBlock: source.refresh().lastBlock }));
 
   app.get("/pools", (c) => json(c, poolView(source.refresh())));
+
+  app.get("/markets", (c) => json(c, marketViews(deployment, source.refresh())));
 
   app.get("/accounts", (c) => json(c, accountList(source.refresh())));
 
