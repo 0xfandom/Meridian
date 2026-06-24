@@ -112,6 +112,78 @@ describe("API routes", () => {
     expect(body.addresses.pool).toBe("0x8A791620dd6260079BF849Dc5567aDC3F2FdC318");
   });
 
+  it("serves per-market data: /markets, pool prices, and account market tags", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "meridian-api-mkts-"));
+    const snapPath = join(dir, "indexer-state.json");
+    const WETH = "0x000000000000000000000000000000000000aaaa";
+    const LINK = "0x000000000000000000000000000000000000bbbb";
+    const WCM = "0x000000000000000000000000000000000000cccc";
+    const LCM = "0x000000000000000000000000000000000000dddd";
+    const WLM = "0x000000000000000000000000000000000000eeee";
+    const LLM = "0x000000000000000000000000000000000000ffff";
+    writeFileSync(
+      snapPath,
+      JSON.stringify({
+        pool: { totalDeposited: "1000n", totalBorrowed: "700n", cumulativeInterestRepaid: "0n" },
+        accounts: {
+          [ACCOUNT]: {
+            account: ACCOUNT,
+            owner: OWNER,
+            facePrincipal: "700n",
+            collateralDeposited: "100n",
+            open: true,
+            liquidated: false,
+            symbol: "LINK",
+            collateralToken: LINK,
+            creditManager: LCM,
+          },
+        },
+        liquidations: [],
+        lastBlock: "5n",
+        collateralPriceUsdc: "1676738970n",
+        prices: { [WETH]: "1676738970n", [LINK]: "7619119n" },
+      }),
+    );
+    const manifestPath = join(dir, "local.json");
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        network: "local",
+        chainId: 31337,
+        startBlock: 0,
+        pool: "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
+        markets: [
+          { symbol: "WETH", decimals: 18, collateralToken: WETH, creditManager: WCM, liquidationModule: WLM },
+          { symbol: "LINK", decimals: 18, collateralToken: LINK, creditManager: LCM, liquidationModule: LLM },
+        ],
+      }),
+    );
+    const app = createApp({
+      config: loadConfig({
+        INDEXER_SNAPSHOT_PATH: snapPath,
+        MERIDIAN_DEPLOYMENT: manifestPath,
+        API_SESSION_SECRET: "test-secret",
+      } as NodeJS.ProcessEnv),
+      source: new SnapshotSource(snapPath),
+      nonces: new NonceStore(),
+      now: () => NOW,
+    });
+
+    const markets = (await (await app.request("/markets")).json()) as Array<Record<string, string>>;
+    expect(markets).toHaveLength(2);
+    const link = markets.find((m) => m.symbol === "LINK");
+    expect(link?.priceUsdc).toBe("7619119");
+    expect(link?.creditManager).toBe(LCM);
+
+    const pools = (await (await app.request("/pools")).json()) as { prices: Record<string, string> };
+    expect(pools.prices[WETH]).toBe("1676738970");
+    expect(pools.prices[LINK]).toBe("7619119");
+
+    const accounts = (await (await app.request("/accounts")).json()) as Array<Record<string, string>>;
+    expect(accounts[0]?.symbol).toBe("LINK");
+    expect(accounts[0]?.collateralToken).toBe(LINK);
+  });
+
   it("runs the SIWE login flow and authorizes /me", async () => {
     const app = buildApp();
 

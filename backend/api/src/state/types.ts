@@ -17,6 +17,10 @@ export interface AccountState {
   open: boolean;
   liquidated: boolean;
   healthFactorWad?: bigint; // live health from the indexer's chain read (1e18 = 1.0)
+  // The market this account belongs to (from the indexer). Absent on pre-multi-market snapshots.
+  creditManager?: Address;
+  collateralToken?: Address;
+  symbol?: string;
 }
 
 export interface LiquidationRecord {
@@ -33,7 +37,8 @@ export interface ProtocolState {
   accounts: Record<Address, AccountState>;
   liquidations: LiquidationRecord[];
   lastBlock: bigint;
-  collateralPriceUsdc?: bigint; // live oracle mark for the collateral token (6-dp unit)
+  collateralPriceUsdc?: bigint; // live oracle mark for the primary collateral (6-dp unit)
+  prices?: Record<Address, bigint>; // live oracle mark per collateral token (6-dp unit)
 }
 
 export function emptyState(): ProtocolState {

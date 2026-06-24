@@ -60,4 +60,30 @@ describe("loadDeployment", () => {
     expect(info?.chainId).toBe(0);
     expect(info?.addresses.pool).toBe(POOL);
   });
+
+  it("parses the markets array", () => {
+    const path = writeManifest({
+      network: "local",
+      chainId: 31337,
+      startBlock: 0,
+      pool: POOL,
+      markets: [
+        { symbol: "WETH", decimals: 18, collateralToken: USDC, creditManager: POOL, liquidationModule: USDC },
+      ],
+    });
+    const info = loadDeployment(path);
+    expect(info?.markets).toHaveLength(1);
+    expect(info?.markets[0]?.symbol).toBe("WETH");
+    expect(info?.markets[0]?.collateralToken).toBe(USDC);
+    expect(info?.markets[0]?.decimals).toBe(18);
+  });
+
+  it("skips malformed markets and defaults to an empty list when absent", () => {
+    expect(loadDeployment(writeManifest({ pool: POOL }))?.markets).toEqual([]);
+    const path = writeManifest({
+      pool: POOL,
+      markets: [{ symbol: "BAD", collateralToken: "not-an-address", creditManager: POOL, liquidationModule: POOL }],
+    });
+    expect(loadDeployment(path)?.markets).toEqual([]);
+  });
 });

@@ -1,4 +1,14 @@
 import { readFileSync } from "node:fs";
+import type { Address } from "./state/types.js";
+
+/// One credit market from the manifest: a collateral asset and its per-market contracts.
+export interface DeploymentMarket {
+  symbol: string;
+  collateralToken: Address;
+  creditManager: Address;
+  liquidationModule: Address;
+  decimals: number;
+}
 
 /// The contract addresses a client needs to interact with a deployment. The deploy script writes
 /// the full manifest (every contract address plus chain metadata) to
@@ -9,6 +19,7 @@ export interface DeploymentInfo {
   chainId: number;
   startBlock: number;
   addresses: Record<string, string>;
+  markets: DeploymentMarket[];
 }
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
@@ -36,5 +47,37 @@ export function loadDeployment(path: string | undefined): DeploymentInfo | null 
   const chainId = typeof raw.chainId === "number" ? raw.chainId : 0;
   const startBlock = typeof raw.startBlock === "number" ? raw.startBlock : 0;
 
-  return { network, chainId, startBlock, addresses };
+  return { network, chainId, startBlock, addresses, markets: parseMarkets(raw.markets) };
+}
+
+/// Parses the manifest's markets array, skipping any entry with a malformed address rather than
+/// throwing. Returns an empty list when the manifest predates multi-market support.
+function parseMarkets(raw: unknown): DeploymentMarket[] {
+  if (!Array.isArray(raw)) return [];
+  const markets: DeploymentMarket[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const m = entry as Record<string, unknown>;
+    const collateralToken = m.collateralToken;
+    const creditManager = m.creditManager;
+    const liquidationModule = m.liquidationModule;
+    if (
+      typeof collateralToken !== "string" ||
+      !ADDRESS_RE.test(collateralToken) ||
+      typeof creditManager !== "string" ||
+      !ADDRESS_RE.test(creditManager) ||
+      typeof liquidationModule !== "string" ||
+      !ADDRESS_RE.test(liquidationModule)
+    ) {
+      continue;
+    }
+    markets.push({
+      symbol: typeof m.symbol === "string" ? m.symbol : "",
+      collateralToken: collateralToken as Address,
+      creditManager: creditManager as Address,
+      liquidationModule: liquidationModule as Address,
+      decimals: typeof m.decimals === "number" ? m.decimals : 18,
+    });
+  }
+  return markets;
 }
