@@ -18,6 +18,11 @@ export interface AccountState {
   open: boolean;
   liquidated: boolean;
   healthFactorWad?: bigint; // live chain read (1e18 = 1.0); set for open accounts only
+  // The market this account belongs to. Set from the openAccount event; absent on pre-multi-market
+  // snapshots, where enrichment falls back to the primary market.
+  creditManager?: Address;
+  collateralToken?: Address;
+  symbol?: string;
 }
 
 /// A recorded liquidation, sourced from the credit manager's economic event.
@@ -35,7 +40,8 @@ export interface IndexerState {
   accounts: Record<Address, AccountState>;
   liquidations: LiquidationRecord[];
   lastBlock: bigint;
-  collateralPriceUsdc?: bigint; // live oracle mark for the collateral token, in the 6-dp unit
+  collateralPriceUsdc?: bigint; // live oracle mark for the primary collateral, in the 6-dp unit
+  prices?: Record<Address, bigint>; // live oracle mark per collateral token, in the 6-dp unit
 }
 
 export function initialState(): IndexerState {

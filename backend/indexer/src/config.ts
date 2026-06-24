@@ -1,16 +1,28 @@
 import type { Address } from "./domain/events.js";
 import { type DeploymentManifest, loadManifest } from "./manifest.js";
 
+/// One credit market the indexer watches: a collateral asset and its credit/liquidation contracts.
+/// The pool and oracle are shared and live on the config root.
+export interface MarketConfig {
+  symbol: string;
+  collateralToken: Address;
+  creditManager: Address;
+  liquidationModule: Address;
+}
+
 export interface IndexerConfig {
   rpcUrl: string;
   pool: Address;
+  // Every credit market to index. markets[0] is the primary market, mirrored to the flat fields
+  // below for any consumer not yet migrated.
+  markets: MarketConfig[];
   creditManager: Address;
   liquidationModule: Address;
   startBlock: bigint;
   pollIntervalMs: number;
   snapshotPath: string;
-  // Optional: when both are present the indexer enriches the snapshot with the live collateral mark
-  // and per-account health factor each poll. Absent (no manifest) -> enrichment is skipped.
+  // Optional: when set the indexer enriches the snapshot with the live collateral marks and
+  // per-account health factors each poll. Absent (no manifest) -> enrichment is skipped.
   oracle?: Address;
   collateralToken?: Address;
 }
@@ -26,25 +38,67 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IndexerConfig 
 
   const manifest = env.MERIDIAN_DEPLOYMENT ? loadManifest(env.MERIDIAN_DEPLOYMENT) : null;
 
+  const creditManager = resolveAddress(
+    env,
+    "MERIDIAN_CREDIT_MANAGER_ADDRESS",
+    manifest?.creditManager,
+  );
+  const liquidationModule = resolveAddress(
+    env,
+    "MERIDIAN_LIQUIDATION_MODULE_ADDRESS",
+    manifest?.liquidationModule,
+  );
+  const collateralToken = resolveOptionalAddress(
+    env,
+    "MERIDIAN_COLLATERAL_ADDRESS",
+    manifest?.collateralToken,
+  );
+
   return {
     rpcUrl,
     pool: resolveAddress(env, "MERIDIAN_POOL_ADDRESS", manifest?.pool),
-    creditManager: resolveAddress(env, "MERIDIAN_CREDIT_MANAGER_ADDRESS", manifest?.creditManager),
-    liquidationModule: resolveAddress(
-      env,
-      "MERIDIAN_LIQUIDATION_MODULE_ADDRESS",
-      manifest?.liquidationModule,
-    ),
+    markets: resolveMarkets(manifest, { creditManager, liquidationModule, collateralToken }),
+    creditManager,
+    liquidationModule,
     startBlock: resolveStartBlock(env, manifest),
     pollIntervalMs: Number(env.INDEXER_POLL_INTERVAL_MS ?? "4000"),
     snapshotPath: env.INDEXER_SNAPSHOT_PATH ?? "./indexer-state.json",
     oracle: resolveOptionalAddress(env, "MERIDIAN_ORACLE_ADDRESS", manifest?.oracle),
-    collateralToken: resolveOptionalAddress(
-      env,
-      "MERIDIAN_COLLATERAL_ADDRESS",
-      manifest?.collateralToken,
-    ),
+    collateralToken,
   };
+}
+
+/// Builds the market list. Prefers the manifest's markets array; falls back to a single primary
+/// market from the resolved addresses. Env overrides of the primary credit/liquidation contracts are
+/// applied to markets[0] so they take effect for the watched market, not just the flat fields.
+function resolveMarkets(
+  manifest: DeploymentManifest | null,
+  primary: { creditManager: Address; liquidationModule: Address; collateralToken?: Address },
+): MarketConfig[] {
+  const markets: MarketConfig[] =
+    manifest && manifest.markets.length > 0
+      ? manifest.markets.map((m) => ({ ...m }))
+      : [
+          {
+            symbol: "primary",
+            collateralToken: primary.collateralToken ?? primary.creditManager,
+            creditManager: primary.creditManager,
+            liquidationModule: primary.liquidationModule,
+          },
+        ];
+
+  // Apply the primary env overrides to markets[0] so they take effect for the watched market.
+  // markets always has at least one entry (both branches above produce one).
+  const first = markets[0] as MarketConfig;
+  return [
+    {
+      symbol: first.symbol,
+      collateralToken: primary.collateralToken ?? first.collateralToken,
+      creditManager: primary.creditManager,
+      liquidationModule: primary.liquidationModule,
+    },
+    ...markets.slice(1),
+  ];
 }
 
 function resolveAddress(

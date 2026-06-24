@@ -7,7 +7,7 @@ import {
   priceOracleAbi,
 } from "../abis/meridian.js";
 import type { IndexerConfig } from "../config.js";
-import type { IndexedEvent } from "../domain/events.js";
+import type { Address, IndexedEvent } from "../domain/events.js";
 import { applyEvent } from "../domain/reducer.js";
 import { type IndexerState, initialState } from "../domain/state.js";
 import { JsonSnapshotStore } from "../store/snapshot.js";
@@ -57,22 +57,29 @@ async function enrich(
   config: IndexerConfig,
   state: IndexerState,
 ): Promise<IndexerState> {
-  if (!config.oracle || !config.collateralToken) return state;
+  if (!config.oracle) return state;
+  const oracle = config.oracle;
+  const primaryCreditManager = config.markets[0]?.creditManager ?? config.creditManager;
 
   try {
-    const price = await client.readContract({
-      address: config.oracle,
-      abi: priceOracleAbi,
-      functionName: "getPrice",
-      args: [config.collateralToken],
-    });
+    // One live mark per distinct collateral token, read from the shared oracle.
+    const tokens = [...new Set(config.markets.map((m) => m.collateralToken))];
+    const priceEntries = await Promise.all(
+      tokens.map((token) =>
+        client
+          .readContract({ address: oracle, abi: priceOracleAbi, functionName: "getPrice", args: [token] })
+          .then((price) => [token, price] as const),
+      ),
+    );
+    const prices = Object.fromEntries(priceEntries) as Record<Address, bigint>;
 
     const open = Object.values(state.accounts).filter((a) => a.open && !a.liquidated);
     const healths = await Promise.all(
       open.map((a) =>
         client
           .readContract({
-            address: config.creditManager,
+            // Each account's health is read from its own market's credit manager.
+            address: a.creditManager ?? primaryCreditManager,
             abi: creditManagerReadAbi,
             functionName: "calcHealthFactor",
             args: [a.account],
@@ -92,7 +99,13 @@ async function enrich(
       ]),
     );
 
-    return { ...state, collateralPriceUsdc: price, accounts };
+    const primaryToken = config.markets[0]?.collateralToken;
+    return {
+      ...state,
+      prices,
+      collateralPriceUsdc: primaryToken ? prices[primaryToken] : state.collateralPriceUsdc,
+      accounts,
+    };
   } catch {
     return state;
   }
@@ -122,27 +135,39 @@ async function collectEvents(
   fromBlock: bigint,
   toBlock: bigint,
 ): Promise<IndexedEvent[]> {
-  const [poolLogs, cmLogs, lmLogs] = await Promise.all([
-    client.getContractEvents({ abi: poolAbi, address: config.pool, fromBlock, toBlock }),
-    client.getContractEvents({
-      abi: creditManagerAbi,
-      address: config.creditManager,
-      fromBlock,
-      toBlock,
-    }),
-    client.getContractEvents({
-      abi: liquidationModuleAbi,
-      address: config.liquidationModule,
-      fromBlock,
-      toBlock,
-    }),
-  ]);
+  // The pool is shared across markets; the credit manager and liquidation module are per-market.
+  const poolLogsP = client.getContractEvents({
+    abi: poolAbi,
+    address: config.pool,
+    fromBlock,
+    toBlock,
+  });
+  const marketLogsP = config.markets.map(async (market) => {
+    const [cmLogs, lmLogs] = await Promise.all([
+      client.getContractEvents({ abi: creditManagerAbi, address: market.creditManager, fromBlock, toBlock }),
+      client.getContractEvents({
+        abi: liquidationModuleAbi,
+        address: market.liquidationModule,
+        fromBlock,
+        toBlock,
+      }),
+    ]);
+    return { market, cmLogs, lmLogs };
+  });
+  const [poolLogs, marketResults] = await Promise.all([poolLogsP, Promise.all(marketLogsP)]);
 
   const events: IndexedEvent[] = [];
   for (const log of poolLogs) push(events, decodePoolLog(log as unknown as DecodableLog));
-  for (const log of cmLogs) push(events, decodeCreditManagerLog(log as unknown as DecodableLog));
-  for (const log of lmLogs)
-    push(events, decodeLiquidationModuleLog(log as unknown as DecodableLog));
+  for (const { market, cmLogs, lmLogs } of marketResults) {
+    const tag = {
+      creditManager: market.creditManager,
+      collateralToken: market.collateralToken,
+      symbol: market.symbol,
+    };
+    for (const log of cmLogs) push(events, decodeCreditManagerLog(log as unknown as DecodableLog, tag));
+    for (const log of lmLogs)
+      push(events, decodeLiquidationModuleLog(log as unknown as DecodableLog));
+  }
   return events;
 }
 

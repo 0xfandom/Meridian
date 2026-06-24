@@ -10,6 +10,9 @@ const CREDIT_MANAGER = "0x00000000000000000000000000000000000000b2";
 const LIQUIDATION_MODULE = "0x00000000000000000000000000000000000000c3";
 const ORACLE = "0x00000000000000000000000000000000000000d4";
 const WETH = "0x00000000000000000000000000000000000000e5";
+const LINK = "0x00000000000000000000000000000000000000f6";
+const LINK_CREDIT_MANAGER = "0x0000000000000000000000000000000000000a07";
+const LINK_LIQUIDATION_MODULE = "0x0000000000000000000000000000000000000b08";
 
 function writeManifest(dir: string, body: Record<string, unknown>): string {
   const path = join(dir, "local.json");
@@ -26,6 +29,20 @@ const validBody = {
   liquidationModule: LIQUIDATION_MODULE,
   oracle: ORACLE,
   weth: WETH,
+  markets: [
+    {
+      symbol: "WETH",
+      collateralToken: WETH,
+      creditManager: CREDIT_MANAGER,
+      liquidationModule: LIQUIDATION_MODULE,
+    },
+    {
+      symbol: "LINK",
+      collateralToken: LINK,
+      creditManager: LINK_CREDIT_MANAGER,
+      liquidationModule: LINK_LIQUIDATION_MODULE,
+    },
+  ],
 };
 
 describe("deployment manifest", () => {
@@ -53,6 +70,48 @@ describe("deployment manifest", () => {
   it("rejects a malformed address", () => {
     const path = writeManifest(dir, { ...validBody, pool: "0xnothex" });
     expect(() => loadManifest(path)).toThrow(/pool must be a 20-byte hex address/);
+  });
+
+  it("parses every market from the markets array", () => {
+    const manifest = loadManifest(writeManifest(dir, validBody));
+    expect(manifest.markets).toHaveLength(2);
+    expect(manifest.markets[0]).toEqual({
+      symbol: "WETH",
+      collateralToken: WETH,
+      creditManager: CREDIT_MANAGER,
+      liquidationModule: LIQUIDATION_MODULE,
+    });
+    expect(manifest.markets[1]).toEqual({
+      symbol: "LINK",
+      collateralToken: LINK,
+      creditManager: LINK_CREDIT_MANAGER,
+      liquidationModule: LINK_LIQUIDATION_MODULE,
+    });
+  });
+
+  it("synthesises a primary market from the flat fields when markets is absent", () => {
+    const { markets, ...flat } = validBody;
+    void markets;
+    const manifest = loadManifest(writeManifest(dir, flat));
+    expect(manifest.markets).toEqual([
+      {
+        symbol: "primary",
+        collateralToken: WETH,
+        creditManager: CREDIT_MANAGER,
+        liquidationModule: LIQUIDATION_MODULE,
+      },
+    ]);
+  });
+
+  it("exposes every market to the indexer config", () => {
+    const path = writeManifest(dir, validBody);
+    const config = loadConfig({
+      INDEXER_RPC_URL: "http://localhost:8545",
+      MERIDIAN_DEPLOYMENT: path,
+    });
+    expect(config?.markets).toHaveLength(2);
+    expect(config?.markets[1]?.symbol).toBe("LINK");
+    expect(config?.markets[1]?.creditManager).toBe(LINK_CREDIT_MANAGER);
   });
 
   it("feeds the indexer config when MERIDIAN_DEPLOYMENT is set", () => {

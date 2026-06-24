@@ -60,7 +60,15 @@ export function decodePoolLog(log: DecodableLog): IndexedEvent | null {
   }
 }
 
-export function decodeCreditManagerLog(log: DecodableLog): IndexedEvent | null {
+/// The market a credit-manager log belongs to, stamped onto account-creating events so the reducer
+/// and enrichment know which collateral and credit manager an account uses.
+export interface MarketTag {
+  creditManager: Address;
+  collateralToken: Address;
+  symbol: string;
+}
+
+export function decodeCreditManagerLog(log: DecodableLog, market?: MarketTag): IndexedEvent | null {
   const meta = metaOf(log);
   const a = log.args;
   if (!meta || !a) return null;
@@ -72,6 +80,9 @@ export function decodeCreditManagerLog(log: DecodableLog): IndexedEvent | null {
         owner: addr(a.owner),
         collateral: big(a.collateral),
         borrowed: big(a.borrowed),
+        creditManager: market?.creditManager,
+        collateralToken: market?.collateralToken,
+        symbol: market?.symbol,
         meta,
       };
     case "IncreaseDebt":
