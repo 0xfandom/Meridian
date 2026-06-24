@@ -16,11 +16,13 @@ import {
   Wallet,
   X,
 } from "lucide-react";
+import { ShieldAlert } from "lucide-react";
 import type { MarketView } from "@/lib/api";
 import { useBorrowerAccount, type BorrowerAccount } from "@/lib/use-borrower-account";
 import { useCreditActions, type CreditActions, type CreditPhase } from "@/lib/use-credit-actions";
 import { collateralByToken, useWalletBalances, type WalletBalances } from "@/lib/use-balances";
 import { useMarkets } from "@/lib/use-markets";
+import { useLiquidationReport, type LiquidationReport } from "@/lib/use-liquidation-report";
 
 function usd(n: number): string {
   if (!Number.isFinite(n)) return "—";
@@ -35,8 +37,39 @@ function healthColor(h: number): string {
   return "text-red";
 }
 
+const DISMISSED_KEY = "meridian:dismissed-liquidations";
+
 export function BorrowLive() {
   const account = useBorrowerAccount();
+  const report = useLiquidationReport();
+
+  // The liquidation report reflects real on-chain standing (liquidated, no open account), so it
+  // shows on every load. Once the user acknowledges it ("Open a new account"), remember that per
+  // liquidation tx so a reconnect does not resurface the same one; a brand-new liquidation still
+  // shows its own report.
+  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(DISMISSED_KEY);
+      if (raw) setDismissed(new Set(JSON.parse(raw) as string[]));
+    } catch {
+      // ignore unreadable storage
+    }
+  }, []);
+
+  const dismissReport = (txHash: string) => {
+    setDismissed((prev) => {
+      const next = new Set(prev).add(txHash);
+      try {
+        window.localStorage.setItem(DISMISSED_KEY, JSON.stringify([...next]));
+      } catch {
+        // ignore unwritable storage
+      }
+      return next;
+    });
+  };
+
+  const liquidated = account === null && report != null && !dismissed.has(report.txHash);
 
   return (
     <section className="rounded-b-[26px] bg-[#f1f1ef] px-5 pb-7 pt-3 lg:px-9 lg:pb-9 lg:pt-4">
@@ -45,28 +78,331 @@ export function BorrowLive() {
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red opacity-60" />
           <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-red" />
         </span>
-        Margin Account · Live
+        {liquidated ? "Margin Account · Closed" : "Margin Account · Live"}
       </div>
       <h1
         className="mt-2 font-sans font-extrabold leading-[0.95] tracking-tight text-ink"
         style={{ fontSize: "clamp(1.9rem, 4vw, 3rem)" }}
       >
-        Your position<span className="text-red">.</span>
+        {liquidated ? (
+          <>
+            <span className="text-red">Liquidated</span>
+            <span className="text-ink">!</span>
+          </>
+        ) : (
+          <>
+            Your position<span className="text-red">.</span>
+          </>
+        )}
       </h1>
       <p className="mt-1.5 text-[13.5px] text-ink-m">
-        Collateral, credit and risk — read straight from your on-chain margin account.
+        {liquidated
+          ? "Your account was liquidated. Here is what happened, read straight from the chain."
+          : "Collateral, credit and risk — read straight from your on-chain margin account."}
       </p>
 
       <div className="mt-7">
         {account === undefined ? (
           <LoadingCard />
+        ) : liquidated ? (
+          <div className="flex flex-col gap-5">
+            <LiquidationReportCard report={report} onStartNew={() => dismissReport(report.txHash)} />
+            <LiquidationTheory />
+            <BrandBand />
+          </div>
         ) : account === null ? (
-          <OpenAccountCard />
+          <div className="flex flex-col gap-5">
+            <OpenAccountCard />
+            <BorrowHowItWorks />
+            <BrandBand />
+          </div>
         ) : (
           <PositionCard account={account} />
         )}
       </div>
     </section>
+  );
+}
+
+// A small drawn sad face (not an emoji) for the liquidation report.
+function SadFace({ size = 72, className = "" }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 64 64"
+      fill="none"
+      aria-hidden="true"
+      className={className}
+    >
+      <circle cx="32" cy="32" r="29" fill="#fff" stroke="#e11d2a" strokeWidth="3" />
+      <circle cx="22.5" cy="27" r="3.4" fill="#0a0a0a" />
+      <circle cx="41.5" cy="27" r="3.4" fill="#0a0a0a" />
+      <path
+        d="M20 45 Q32 33 44 45"
+        stroke="#0a0a0a"
+        strokeWidth="3.2"
+        strokeLinecap="round"
+        fill="none"
+      />
+    </svg>
+  );
+}
+
+// Read-only post-mortem shown after the connected wallet's account is liquidated.
+function LiquidationReportCard({
+  report,
+  onStartNew,
+}: {
+  report: LiquidationReport;
+  onStartNew: () => void;
+}) {
+  const details = [
+    { k: "Market", v: `${report.symbol} collateral` },
+    {
+      k: "Liquidator (keeper)",
+      v: `${report.liquidator.slice(0, 6)}…${report.liquidator.slice(-4)}`,
+    },
+    { k: "Block", v: `#${report.blockNumber}` },
+    { k: "Transaction", v: `${report.txHash.slice(0, 10)}…${report.txHash.slice(-6)}` },
+  ];
+
+  return (
+    <div className="grid gap-3 lg:grid-cols-[1.5fr_1fr]">
+      <div className="flex flex-col gap-5 rounded-2xl border border-red/40 bg-white p-6 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_18px_44px_-20px_rgba(225,29,42,0.28)]">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-red/10 text-red">
+              <ShieldAlert size={18} strokeWidth={2.2} />
+            </span>
+            <h2 className="font-sans text-[16px] font-bold tracking-tight text-ink">
+              Liquidation report
+            </h2>
+          </div>
+          <span className="font-mono text-[11px] text-ink-f">
+            {report.account.slice(0, 6)}…{report.account.slice(-4)}
+          </span>
+        </div>
+
+        {/* hero figures */}
+        <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-hair/70 bg-hair/70">
+          <div className="bg-white px-5 py-5">
+            <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-f">
+              Collateral seized
+            </div>
+            <div className="mt-1 font-sans text-[26px] font-extrabold leading-none tracking-tight text-red">
+              {report.collateralSeized.toFixed(2)}
+              <span className="ml-1 text-[14px] font-bold text-ink-m">{report.symbol}</span>
+            </div>
+          </div>
+          <div className="bg-white px-5 py-5">
+            <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-f">
+              Debt repaid to pool
+            </div>
+            <div className="mt-1 font-sans text-[26px] font-extrabold leading-none tracking-tight text-ink">
+              {usd(report.debtRepaid)}
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-hair/70">
+          {details.map((r, i) => (
+            <div
+              key={r.k}
+              className={`flex items-center justify-between px-4 py-3 ${
+                i > 0 ? "border-t border-hair/70" : ""
+              }`}
+            >
+              <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-f">
+                {r.k}
+              </span>
+              <span className="font-mono text-[13px] font-semibold text-ink">{r.v}</span>
+            </div>
+          ))}
+        </div>
+
+        <button
+          onClick={onStartNew}
+          className="mt-1 w-full rounded-full bg-ink py-3.5 text-[15px] font-semibold text-white transition-colors hover:bg-red"
+        >
+          Open a new margin account
+        </button>
+      </div>
+
+      {/* what it means */}
+      <div className="flex flex-col rounded-2xl border border-hair/70 bg-white p-6 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+          <SadFace size={92} />
+          <div className="font-sans text-[20px] font-extrabold tracking-tight text-ink">
+            Position wiped out
+          </div>
+          <p className="text-[12.5px] leading-relaxed text-ink-m">
+            Your account health fell below the liquidation floor, so the keeper repaid your debt and
+            seized the collateral at a discount. The account is closed — this view is read-only.
+          </p>
+        </div>
+
+        {/* outcome breakdown */}
+        <div className="mt-5 overflow-hidden rounded-xl border border-hair/70">
+          {[
+            { k: "Debt to pool", v: "Cleared", tone: "ink" as const },
+            { k: "Your collateral", v: "Seized", tone: "red" as const },
+            { k: "Lender funds", v: "Protected", tone: "green" as const },
+          ].map((o, i) => (
+            <div
+              key={o.k}
+              className={`flex items-center justify-between px-4 py-2.5 ${
+                i > 0 ? "border-t border-hair/70" : ""
+              }`}
+            >
+              <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-f">
+                {o.k}
+              </span>
+              <span
+                className={`rounded-full px-2.5 py-0.5 font-mono text-[11px] font-semibold ${
+                  o.tone === "green"
+                    ? "bg-[#0f9d6e]/10 text-[#0f9d6e]"
+                    : o.tone === "red"
+                      ? "bg-red/10 text-red"
+                      : "bg-off text-ink"
+                }`}
+              >
+                {o.v}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Educational band shown under the liquidation report: the lifecycle the account just went through.
+function LiquidationTheory() {
+  const steps = [
+    {
+      n: "01",
+      t: "Health falls",
+      d: "The collateral price drops until the account's health factor — risk-adjusted collateral over debt — slips below 1.0, the liquidation floor.",
+    },
+    {
+      n: "02",
+      t: "Keeper detects",
+      d: "An off-chain risk engine flags the account; the on-chain liquidation module re-checks the floor, so a stale read can never force an unfair seizure.",
+    },
+    {
+      n: "03",
+      t: "Debt repaid",
+      d: "The keeper repays the account's debt to the pool — funding any shortfall from its own balance — so lenders are made whole instantly.",
+    },
+    {
+      n: "04",
+      t: "Collateral seized",
+      d: "In return, the keeper takes the collateral at a discount. That discount is the incentive that keeps the whole system solvent.",
+    },
+  ];
+
+  return (
+    <div className="rounded-2xl border border-hair/70 bg-white p-6 lg:p-8 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
+      <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-f">The theory</div>
+      <h2
+        className="mt-1.5 font-sans font-extrabold leading-[1.02] tracking-tight text-ink"
+        style={{ fontSize: "clamp(1.5rem, 3vw, 2.3rem)" }}
+      >
+        How a liquidation works<span className="text-red">.</span>
+      </h2>
+      <p className="mt-2 max-w-[640px] text-[13.5px] leading-relaxed text-ink-m">
+        Liquidation is what lets Meridian offer capital-efficient, undercollateralized leverage while
+        keeping every lender fully covered. Here is the exact lifecycle your account just went
+        through — settled on-chain, in seconds.
+      </p>
+      <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {steps.map((s) => (
+          <div key={s.n} className="rounded-xl border border-hair/70 bg-off/40 p-4">
+            <div className="font-sans text-[22px] font-extrabold tracking-tight text-red">{s.n}</div>
+            <div className="mt-1 font-sans text-[14.5px] font-bold tracking-tight text-ink">
+              {s.t}
+            </div>
+            <p className="mt-1.5 text-[12px] leading-relaxed text-ink-m">{s.d}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Educational band shown under the open-account form: how a margin account works, end to end.
+function BorrowHowItWorks() {
+  const steps = [
+    {
+      n: "01",
+      t: "Post collateral",
+      d: "Pick a market and deposit collateral into an isolated margin account — an on-chain clone that only you control.",
+    },
+    {
+      n: "02",
+      t: "Draw credit",
+      d: "Borrow USDC against your collateral, capital-efficiently, drawn straight from the lender pool.",
+    },
+    {
+      n: "03",
+      t: "Lever & trade",
+      d: "Swap drawn USDC into more collateral through whitelisted adapters — inside the account, never leaving on trust.",
+    },
+    {
+      n: "04",
+      t: "Stay healthy",
+      d: "One health check gates every action. Keep your health factor above 1.0, or a keeper liquidates the account.",
+    },
+  ];
+
+  return (
+    <div className="rounded-2xl border border-hair/70 bg-white p-6 lg:p-8 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
+      <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-f">How it works</div>
+      <h2
+        className="mt-1.5 font-sans font-extrabold leading-[1.02] tracking-tight text-ink"
+        style={{ fontSize: "clamp(1.5rem, 3vw, 2.3rem)" }}
+      >
+        A margin account, end to end<span className="text-red">.</span>
+      </h2>
+      <p className="mt-2 max-w-[640px] text-[13.5px] leading-relaxed text-ink-m">
+        Meridian is a non-custodial prime brokerage: lenders supply USDC, you borrow against
+        collateral and trade with leverage — all inside an isolated account that can only touch
+        whitelisted protocols. Your funds never leave your control.
+      </p>
+      <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {steps.map((s) => (
+          <div key={s.n} className="rounded-xl border border-hair/70 bg-off/40 p-4">
+            <div className="font-sans text-[22px] font-extrabold tracking-tight text-red">{s.n}</div>
+            <div className="mt-1 font-sans text-[14.5px] font-bold tracking-tight text-ink">
+              {s.t}
+            </div>
+            <p className="mt-1.5 text-[12px] leading-relaxed text-ink-m">{s.d}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Large brand statement that anchors the borrow views.
+function BrandBand() {
+  return (
+    <div className="overflow-hidden rounded-2xl bg-ink px-6 py-12 text-center">
+      <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-white/45">
+        Non-custodial digital-asset prime brokerage
+      </div>
+      <div
+        className="mt-3 font-sans font-extrabold leading-none tracking-tight text-white"
+        style={{ fontSize: "clamp(2.6rem, 8vw, 5.5rem)" }}
+      >
+        Meridian<span className="text-red">.</span>
+      </div>
+      <p className="mx-auto mt-4 max-w-[500px] text-[14px] leading-relaxed text-white/55">
+        Lenders supply, managers borrow against collateral, and the pool is always made whole — even
+        when a position is liquidated. Solvency is enforced, not promised.
+      </p>
+    </div>
   );
 }
 
@@ -419,6 +755,7 @@ function OpenAccountCard() {
   const actions = useCreditActions(market);
 
   const symbol = market?.symbol ?? "";
+  const price = market ? Number(market.priceUsdc) / 1e6 : 0;
   const walletCollateral = collateralByToken(balances, market?.collateralToken)?.amount ?? 0;
   const collateral = parseFloat(collateralRaw) || 0;
   const borrow = parseFloat(borrowRaw) || 0;
@@ -534,11 +871,11 @@ function OpenAccountCard() {
       </div>
 
       {/* estimate */}
-      <div className="flex flex-col justify-center gap-4 rounded-2xl border border-hair/70 bg-white p-6 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
-        <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-f">
-          <TrendingUp size={13} /> Estimate
+      <div className="flex flex-col gap-6 rounded-2xl border border-hair/70 bg-white p-6 lg:p-7 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
+        <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-ink-f">
+          <TrendingUp size={14} className="text-red" /> Estimate
         </div>
-        <Estimate collateral={collateral} borrow={borrow} symbol={symbol || "collateral"} />
+        <Estimate collateral={collateral} borrow={borrow} symbol={symbol || "collateral"} price={price} />
       </div>
     </div>
   );
@@ -548,34 +885,87 @@ function Estimate({
   collateral,
   borrow,
   symbol,
+  price,
 }: {
   collateral: number;
   borrow: number;
   symbol: string;
+  price: number;
 }) {
-  // A pre-open guide only: the borrowed USDC stays in the account, so the account is healthy as long
-  // as (collateral value + borrow) after the market haircut covers the debt. The contract enforces
-  // the real check on open.
-  const rows = [
-    { k: "Collateral", v: `${collateral.toFixed(4)} ${symbol}` },
-    { k: "Borrow", v: usd(borrow) },
-    {
-      k: "Health rule",
-      v: borrow > 0 && collateral > 0 ? "value after haircut ≥ debt" : "no debt",
-    },
-  ];
+  // A pre-open guide only: the borrowed USDC stays in the account, so equity is the collateral value
+  // and gross exposure is collateral value + the drawn USDC. The contract enforces the real check.
+  const collateralValue = collateral * price;
+  const positionValue = collateralValue + borrow;
+  const leverage = collateralValue > 0 ? positionValue / collateralValue : 1;
+  const equityPct = positionValue > 0 ? (collateralValue / positionValue) * 100 : 100;
+  const borrowPct = positionValue > 0 ? (borrow / positionValue) * 100 : 0;
+
   return (
-    <div className="flex flex-col gap-3">
-      {rows.map((r) => (
-        <div key={r.k} className="flex items-center justify-between">
-          <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-f">
-            {r.k}
-          </span>
-          <span className="font-mono text-[13px] font-semibold text-ink">{r.v}</span>
+    <div className="flex flex-1 flex-col gap-6">
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-f">
+            You post
+          </div>
+          <div className="mt-1.5 font-sans text-[30px] font-extrabold leading-none tracking-tight text-ink">
+            {collateral >= 1000 ? collateral.toFixed(0) : collateral.toFixed(2)}
+            <span className="ml-1 text-[15px] font-bold text-ink-m">{symbol}</span>
+          </div>
+          <div className="mt-1.5 font-mono text-[11px] text-ink-f">{usd(collateralValue)}</div>
         </div>
-      ))}
-      <p className="mt-1 flex items-center gap-1.5 font-mono text-[10.5px] text-ink-f">
-        <Wallet size={11} /> The contract rejects an unhealthy open.
+        <div>
+          <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-f">
+            You borrow
+          </div>
+          <div className="mt-1.5 font-sans text-[30px] font-extrabold leading-none tracking-tight text-red">
+            {usd(borrow)}
+          </div>
+          <div className="mt-1.5 font-mono text-[11px] text-ink-f">USDC credit</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-hair/70 bg-hair/70">
+        <div className="bg-white px-4 py-4">
+          <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-f">
+            Position value
+          </div>
+          <div className="mt-1 font-sans text-[20px] font-bold tracking-tight text-ink">
+            {usd(positionValue)}
+          </div>
+        </div>
+        <div className="bg-white px-4 py-4">
+          <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-f">
+            Est. leverage
+          </div>
+          <div className="mt-1 font-sans text-[20px] font-bold tracking-tight text-ink">
+            {leverage.toFixed(2)}x
+          </div>
+        </div>
+      </div>
+
+      {/* exposure split: your collateral vs the credit drawn against it */}
+      <div>
+        <div className="mb-2 flex items-center justify-between font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-f">
+          <span>Exposure</span>
+          <span>{usd(positionValue)}</span>
+        </div>
+        <div className="flex h-3 w-full overflow-hidden rounded-full bg-hair">
+          <div className="h-full bg-ink transition-all" style={{ width: `${equityPct}%` }} />
+          <div className="h-full bg-red transition-all" style={{ width: `${borrowPct}%` }} />
+        </div>
+        <div className="mt-2.5 flex items-center gap-5 font-mono text-[10px] text-ink-m">
+          <span className="flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-ink" /> Your collateral
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-red" /> Borrowed credit
+          </span>
+        </div>
+      </div>
+
+      <p className="mt-auto flex items-center gap-1.5 border-t border-hair/60 pt-4 font-mono text-[10.5px] leading-relaxed text-ink-f">
+        <Wallet size={12} className="shrink-0 text-red" /> The contract rejects an unhealthy open —
+        your health factor must stay above 1.0.
       </p>
     </div>
   );

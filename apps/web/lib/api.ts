@@ -29,6 +29,16 @@ export interface AccountView {
   creditManager?: string;
 }
 
+// A recorded liquidation (GET /liquidations), bigints as decimal strings.
+export interface LiquidationView {
+  account: string;
+  liquidator: string;
+  debtRepaid: string;
+  collateralSeized: string;
+  blockNumber: string;
+  txHash: string;
+}
+
 // One credit market with its live collateral mark (GET /markets).
 export interface MarketView {
   symbol: string;
@@ -65,6 +75,10 @@ export function getAccounts(signal?: AbortSignal): Promise<AccountView[]> {
 
 export function getMarkets(signal?: AbortSignal): Promise<MarketView[]> {
   return getJson<MarketView[]>("/markets", signal);
+}
+
+export function getLiquidations(signal?: AbortSignal): Promise<LiquidationView[]> {
+  return getJson<LiquidationView[]>("/liquidations", signal);
 }
 
 // Returns the deployment, or null when the API has no manifest configured (503).
