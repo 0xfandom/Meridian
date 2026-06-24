@@ -1452,8 +1452,11 @@ function AccountPanel({
             Wallet balance
           </span>
           <span className="font-mono text-[12.5px] font-semibold text-ink">
-            {balances.usdc.toLocaleString("en-US", { maximumFractionDigits: 2 })} USDC ·{" "}
-            {balances.weth.toLocaleString("en-US", { maximumFractionDigits: 4 })} WETH
+            {balances.usdc.toLocaleString("en-US", { maximumFractionDigits: 2 })} USDC
+            {balances.collaterals.map(
+              (c) =>
+                ` · ${c.amount.toLocaleString("en-US", { maximumFractionDigits: 4 })} ${c.symbol}`,
+            )}
           </span>
         </div>
       )}

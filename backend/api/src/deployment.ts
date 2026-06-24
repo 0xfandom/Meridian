@@ -1,12 +1,15 @@
 import { readFileSync } from "node:fs";
 import type { Address } from "./state/types.js";
 
-/// One credit market from the manifest: a collateral asset and its per-market contracts.
+/// One credit market from the manifest: a collateral asset and its per-market contracts. The facade
+/// and swap adapter let a client open and lever a position in this market.
 export interface DeploymentMarket {
   symbol: string;
   collateralToken: Address;
   creditManager: Address;
+  creditFacade: Address;
   liquidationModule: Address;
+  swapAdapter: Address;
   decimals: number;
 }
 
@@ -60,14 +63,20 @@ function parseMarkets(raw: unknown): DeploymentMarket[] {
     const m = entry as Record<string, unknown>;
     const collateralToken = m.collateralToken;
     const creditManager = m.creditManager;
+    const creditFacade = m.creditFacade;
     const liquidationModule = m.liquidationModule;
+    const swapAdapter = m.swapAdapter;
     if (
       typeof collateralToken !== "string" ||
       !ADDRESS_RE.test(collateralToken) ||
       typeof creditManager !== "string" ||
       !ADDRESS_RE.test(creditManager) ||
+      typeof creditFacade !== "string" ||
+      !ADDRESS_RE.test(creditFacade) ||
       typeof liquidationModule !== "string" ||
-      !ADDRESS_RE.test(liquidationModule)
+      !ADDRESS_RE.test(liquidationModule) ||
+      typeof swapAdapter !== "string" ||
+      !ADDRESS_RE.test(swapAdapter)
     ) {
       continue;
     }
@@ -75,7 +84,9 @@ function parseMarkets(raw: unknown): DeploymentMarket[] {
       symbol: typeof m.symbol === "string" ? m.symbol : "",
       collateralToken: collateralToken as Address,
       creditManager: creditManager as Address,
+      creditFacade: creditFacade as Address,
       liquidationModule: liquidationModule as Address,
+      swapAdapter: swapAdapter as Address,
       decimals: typeof m.decimals === "number" ? m.decimals : 18,
     });
   }

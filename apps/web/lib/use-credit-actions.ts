@@ -3,10 +3,10 @@
 import { useCallback, useState } from "react";
 import { type Abi, encodeFunctionData, parseUnits } from "viem";
 import { usePublicClient, useWriteContract } from "wagmi";
+import type { MarketView } from "./api";
 import {
   POOL_FEE,
   USDC_DECIMALS,
-  WETH_DECIMALS,
   creditFacadeAbi,
   creditManagerAbi,
   erc20Abi,
@@ -28,28 +28,35 @@ export type CreditPhase =
   | "success"
   | "error";
 
-/// On-chain borrower actions. open() approves the credit manager to pull the WETH collateral when
-/// its allowance is short, then opens a margin account that posts the collateral and draws the
-/// requested USDC in one call. The manage actions adjust an existing account: borrow/repay move
-/// debt (repayment is funded by the USDC the account already holds, so no approval), addCollateral
-/// pulls WETH from the wallet (approval needed), withdrawCollateral returns WETH to the wallet, and
-/// close repays from the account and returns the rest. `phase` drives status UI; `onSuccess`
-/// (e.g. a refetch trigger) runs after a confirmed receipt.
+/// On-chain borrower actions, scoped to a single credit market. open() approves the market's credit
+/// manager to pull the collateral when its allowance is short, then opens a margin account that posts
+/// the collateral and draws the requested USDC in one call. The manage actions adjust an existing
+/// account: borrow/repay move debt (repayment is funded by the USDC the account already holds, so no
+/// approval), addCollateral pulls collateral from the wallet (approval needed), withdrawCollateral
+/// returns it to the wallet, lever swaps drawn USDC into more collateral through the market's
+/// whitelisted adapter, and close repays from the account and returns the rest. `phase` drives status
+/// UI; `onSuccess` (e.g. a refetch trigger) runs after a confirmed receipt.
+///
+/// Pass the market the action concerns: the selected market for opening, or the account's own market
+/// for managing an existing position.
 export interface CreditActions {
   phase: CreditPhase;
   error?: string;
   txHash?: `0x${string}`;
-  open: (collateralWeth: number, borrowUsdc: number) => Promise<void>;
+  open: (collateralAmount: number, borrowUsdc: number) => Promise<void>;
   borrow: (account: `0x${string}`, amountUsdc: number) => Promise<void>;
   repay: (account: `0x${string}`, amountUsdc: number) => Promise<void>;
-  addCollateral: (account: `0x${string}`, amountWeth: number) => Promise<void>;
-  withdrawCollateral: (account: `0x${string}`, amountWeth: number) => Promise<void>;
+  addCollateral: (account: `0x${string}`, amount: number) => Promise<void>;
+  withdrawCollateral: (account: `0x${string}`, amount: number) => Promise<void>;
   lever: (account: `0x${string}`, amountUsdc: number) => Promise<void>;
   close: (account: `0x${string}`) => Promise<void>;
   reset: () => void;
 }
 
-export function useCreditActions(onSuccess?: () => void): CreditActions {
+export function useCreditActions(
+  market: MarketView | undefined,
+  onSuccess?: () => void,
+): CreditActions {
   const { address } = useWallet();
   const deployment = useDeployment();
   const publicClient = usePublicClient();
@@ -59,11 +66,12 @@ export function useCreditActions(onSuccess?: () => void): CreditActions {
   const [error, setError] = useState<string>();
   const [txHash, setTxHash] = useState<`0x${string}`>();
 
-  const weth = deployment?.addresses.weth as `0x${string}` | undefined;
   const usdc = deployment?.addresses.usdc as `0x${string}` | undefined;
-  const creditManager = deployment?.addresses.creditManager as `0x${string}` | undefined;
-  const facade = deployment?.addresses.creditFacade as `0x${string}` | undefined;
-  const swapAdapter = deployment?.addresses.swapAdapter as `0x${string}` | undefined;
+  const collateral = market?.collateralToken as `0x${string}` | undefined;
+  const collateralDecimals = market?.decimals ?? 18;
+  const creditManager = market?.creditManager as `0x${string}` | undefined;
+  const facade = market?.creditFacade as `0x${string}` | undefined;
+  const swapAdapter = market?.swapAdapter as `0x${string}` | undefined;
 
   const reset = useCallback(() => {
     setPhase("idle");
@@ -72,26 +80,26 @@ export function useCreditActions(onSuccess?: () => void): CreditActions {
   }, []);
 
   const open = useCallback(
-    async (collateralWeth: number, borrowUsdc: number) => {
-      if (!address || !weth || !creditManager || !facade || !publicClient) return;
-      const collateral = parseUnits(collateralWeth.toString(), WETH_DECIMALS);
+    async (collateralAmount: number, borrowUsdc: number) => {
+      if (!address || !collateral || !creditManager || !facade || !publicClient) return;
+      const collateralWei = parseUnits(collateralAmount.toString(), collateralDecimals);
       const borrow = parseUnits(borrowUsdc.toString(), USDC_DECIMALS);
       try {
         setError(undefined);
         // The credit manager pulls the collateral, so the borrower approves it (not the facade).
         const allowance = await publicClient.readContract({
-          address: weth,
+          address: collateral,
           abi: erc20Abi,
           functionName: "allowance",
           args: [address, creditManager],
         });
-        if (allowance < collateral) {
+        if (allowance < collateralWei) {
           setPhase("approving");
           const approveHash = await writeContractAsync({
-            address: weth,
+            address: collateral,
             abi: erc20Abi,
             functionName: "approve",
-            args: [creditManager, collateral],
+            args: [creditManager, collateralWei],
           });
           await publicClient.waitForTransactionReceipt({ hash: approveHash });
         }
@@ -100,7 +108,7 @@ export function useCreditActions(onSuccess?: () => void): CreditActions {
           address: facade,
           abi: creditFacadeAbi,
           functionName: "openCreditAccount",
-          args: [collateral, borrow],
+          args: [collateralWei, borrow],
         });
         setTxHash(hash);
         await publicClient.waitForTransactionReceipt({ hash });
@@ -111,7 +119,7 @@ export function useCreditActions(onSuccess?: () => void): CreditActions {
         setPhase("error");
       }
     },
-    [address, weth, creditManager, facade, publicClient, writeContractAsync, onSuccess],
+    [address, collateral, collateralDecimals, creditManager, facade, publicClient, writeContractAsync, onSuccess],
   );
 
   // Sends a single write, tracks the phase, waits for the receipt, then fires onSuccess. Used by
@@ -165,23 +173,23 @@ export function useCreditActions(onSuccess?: () => void): CreditActions {
   );
 
   const withdrawCollateral = useCallback(
-    async (account: `0x${string}`, amountWeth: number) => {
+    async (account: `0x${string}`, amount: number) => {
       if (!facade || !address) return;
       await send("withdrawing", {
         address: facade,
         abi: creditFacadeAbi,
         functionName: "withdrawCollateral",
-        args: [account, parseUnits(amountWeth.toString(), WETH_DECIMALS), address],
+        args: [account, parseUnits(amount.toString(), collateralDecimals), address],
       });
     },
-    [facade, address, send],
+    [facade, address, collateralDecimals, send],
   );
 
-  // Lever up: swap the account's drawn USDC into WETH collateral through the whitelisted adapter,
-  // batched so the account approves the adapter and swaps in one health-checked multicall.
+  // Lever up: swap the account's drawn USDC into collateral through the whitelisted adapter, batched
+  // so the account approves the adapter and swaps in one health-checked multicall.
   const lever = useCallback(
     async (account: `0x${string}`, amountUsdc: number) => {
-      if (!facade || !usdc || !weth || !swapAdapter) return;
+      if (!facade || !usdc || !collateral || !swapAdapter) return;
       const amount = parseUnits(amountUsdc.toString(), USDC_DECIMALS);
       const approveCall = encodeFunctionData({
         abi: erc20Abi,
@@ -191,7 +199,7 @@ export function useCreditActions(onSuccess?: () => void): CreditActions {
       const swapCall = encodeFunctionData({
         abi: swapAdapterAbi,
         functionName: "swapExactInputSingle",
-        args: [usdc, weth, POOL_FEE, amount, 0n],
+        args: [usdc, collateral, POOL_FEE, amount, 0n],
       });
       await send("trading", {
         address: facade,
@@ -206,7 +214,7 @@ export function useCreditActions(onSuccess?: () => void): CreditActions {
         ],
       });
     },
-    [facade, usdc, weth, swapAdapter, send],
+    [facade, usdc, collateral, swapAdapter, send],
   );
 
   const close = useCallback(
@@ -222,26 +230,26 @@ export function useCreditActions(onSuccess?: () => void): CreditActions {
     [facade, send],
   );
 
-  // addCollateral pulls WETH from the wallet, so approve the credit manager first when short.
+  // addCollateral pulls collateral from the wallet, so approve the credit manager first when short.
   const addCollateral = useCallback(
-    async (account: `0x${string}`, amountWeth: number) => {
-      if (!address || !weth || !creditManager || !publicClient) return;
-      const amount = parseUnits(amountWeth.toString(), WETH_DECIMALS);
+    async (account: `0x${string}`, amount: number) => {
+      if (!address || !collateral || !creditManager || !publicClient) return;
+      const amountWei = parseUnits(amount.toString(), collateralDecimals);
       try {
         setError(undefined);
         const allowance = await publicClient.readContract({
-          address: weth,
+          address: collateral,
           abi: erc20Abi,
           functionName: "allowance",
           args: [address, creditManager],
         });
-        if (allowance < amount) {
+        if (allowance < amountWei) {
           setPhase("approving");
           const approveHash = await writeContractAsync({
-            address: weth,
+            address: collateral,
             abi: erc20Abi,
             functionName: "approve",
-            args: [creditManager, amount],
+            args: [creditManager, amountWei],
           });
           await publicClient.waitForTransactionReceipt({ hash: approveHash });
         }
@@ -249,14 +257,14 @@ export function useCreditActions(onSuccess?: () => void): CreditActions {
           address: creditManager,
           abi: creditManagerAbi,
           functionName: "addCollateral",
-          args: [account, amount],
+          args: [account, amountWei],
         });
       } catch (e) {
         setError(toMessage(e));
         setPhase("error");
       }
     },
-    [address, weth, creditManager, publicClient, writeContractAsync, send],
+    [address, collateral, collateralDecimals, creditManager, publicClient, writeContractAsync, send],
   );
 
   return {

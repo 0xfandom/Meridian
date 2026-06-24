@@ -153,8 +153,24 @@ describe("API routes", () => {
         startBlock: 0,
         pool: "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
         markets: [
-          { symbol: "WETH", decimals: 18, collateralToken: WETH, creditManager: WCM, liquidationModule: WLM },
-          { symbol: "LINK", decimals: 18, collateralToken: LINK, creditManager: LCM, liquidationModule: LLM },
+          {
+            symbol: "WETH",
+            decimals: 18,
+            collateralToken: WETH,
+            creditManager: WCM,
+            creditFacade: "0x0000000000000000000000000000000000000a01",
+            liquidationModule: WLM,
+            swapAdapter: "0x0000000000000000000000000000000000000a02",
+          },
+          {
+            symbol: "LINK",
+            decimals: 18,
+            collateralToken: LINK,
+            creditManager: LCM,
+            creditFacade: "0x0000000000000000000000000000000000000a03",
+            liquidationModule: LLM,
+            swapAdapter: "0x0000000000000000000000000000000000000a04",
+          },
         ],
       }),
     );
@@ -174,6 +190,8 @@ describe("API routes", () => {
     const link = markets.find((m) => m.symbol === "LINK");
     expect(link?.priceUsdc).toBe("7619119");
     expect(link?.creditManager).toBe(LCM);
+    expect(link?.creditFacade).toBe("0x0000000000000000000000000000000000000a03");
+    expect(link?.swapAdapter).toBe("0x0000000000000000000000000000000000000a04");
 
     const pools = (await (await app.request("/pools")).json()) as { prices: Record<string, string> };
     expect(pools.prices[WETH]).toBe("1676738970");

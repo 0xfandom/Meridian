@@ -10,7 +10,8 @@ export interface PoolView {
   totalBorrowed: string;
   cumulativeInterestRepaid: string;
   utilizationWad: string;
-  collateralPriceUsdc: string; // oracle price of the collateral asset, 6 decimals
+  collateralPriceUsdc: string; // oracle price of the primary collateral, 6 decimals
+  prices: Record<string, string>; // live oracle mark per collateral token, 6 decimals
   lastBlock: string;
 }
 
@@ -22,6 +23,22 @@ export interface AccountView {
   open: boolean;
   liquidated: boolean;
   healthFactorWad?: string; // present for open accounts when the indexer enriches the snapshot
+  // The market the account belongs to (present once the indexer has tagged it).
+  symbol?: string;
+  collateralToken?: string;
+  creditManager?: string;
+}
+
+// One credit market with its live collateral mark (GET /markets).
+export interface MarketView {
+  symbol: string;
+  collateralToken: string;
+  creditManager: string;
+  creditFacade: string;
+  liquidationModule: string;
+  swapAdapter: string;
+  decimals: number;
+  priceUsdc: string; // live oracle mark, 6 decimals
 }
 
 // The contract addresses + chain metadata of the running deployment (GET /deployment).
@@ -44,6 +61,10 @@ export function getPool(signal?: AbortSignal): Promise<PoolView> {
 
 export function getAccounts(signal?: AbortSignal): Promise<AccountView[]> {
   return getJson<AccountView[]>("/accounts", signal);
+}
+
+export function getMarkets(signal?: AbortSignal): Promise<MarketView[]> {
+  return getJson<MarketView[]>("/markets", signal);
 }
 
 // Returns the deployment, or null when the API has no manifest configured (503).

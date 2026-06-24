@@ -30,11 +30,14 @@ contract SeedScript is Script {
     uint256 internal constant BORROWER_A_PK = 0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6;
     uint256 internal constant BORROWER_B_PK = 0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a;
     uint256 internal constant BORROWER_C_PK = 0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba;
+    uint256 internal constant BORROWER_D_PK = 0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e;
 
     uint24 internal constant FEE = 500;
-    uint256 internal constant COLLATERAL = 10e18; // each borrower posts 10 WETH
+    uint256 internal constant COLLATERAL = 10e18; // each WETH borrower posts 10 WETH
+    uint256 internal constant LINK_COLLATERAL = 2_000e18; // the LINK borrower posts 2000 LINK
     uint256 internal constant LP_DEPOSIT = 500_000e6;
     uint256 internal constant CRASH_PRICE = 1_500_000_000; // 1500 USDC/WETH (25% drop) -> cascade
+    uint256 internal constant CRASH_LINK_PRICE = 5_000_000; // 5 USDC/LINK -> LINK account liquidatable
 
     struct Addrs {
         address usdc;
@@ -43,6 +46,9 @@ contract SeedScript is Script {
         address pool;
         address creditManager;
         address swapAdapter;
+        address link;
+        address linkCreditManager;
+        address linkSwapAdapter;
     }
 
     /// @notice Seeds pool liquidity and three leveraged accounts across the health bands.
@@ -52,18 +58,26 @@ contract SeedScript is Script {
         _seedLiquidity(a);
         _fundKeeper(a);
 
-        // Borrow sizes against 10 WETH (20k) collateral at 2000 USDC/WETH set the resting health:
-        //   20k  -> HF 1.80 (healthy), 80k -> HF 1.125 (warning), 120k -> HF 1.05 (margin call).
-        address healthy = _openLevered(a, BORROWER_A_PK, 20_000e6);
-        address warning = _openLevered(a, BORROWER_B_PK, 80_000e6);
-        address marginCall = _openLevered(a, BORROWER_C_PK, 120_000e6);
+        // WETH market. Borrow sizes against 10 WETH collateral set the resting health bands; the USDC
+        // drawn counts as account assets at open, so even the margin-call size opens above the floor.
+        address healthy = _openLevered(a, a.creditManager, a.weth, a.swapAdapter, BORROWER_A_PK, COLLATERAL, 20_000e6);
+        address warning = _openLevered(a, a.creditManager, a.weth, a.swapAdapter, BORROWER_B_PK, COLLATERAL, 80_000e6);
+        address marginCall =
+            _openLevered(a, a.creditManager, a.weth, a.swapAdapter, BORROWER_C_PK, COLLATERAL, 120_000e6);
+
+        // LINK market: one levered account so the book spans both markets. A LINK price crash makes
+        // it liquidatable, exercising the keeper's per-market routing.
+        address linkAccount =
+            _openLevered(a, a.linkCreditManager, a.link, a.linkSwapAdapter, BORROWER_D_PK, LINK_COLLATERAL, 30_000e6);
 
         CreditManager cm = CreditManager(a.creditManager);
+        CreditManager linkCm = CreditManager(a.linkCreditManager);
         console2.log("Seeded Meridian book:");
         console2.log("  pool liquidity (USDC) ", Pool(a.pool).totalAssets());
         console2.log("  healthy     account   ", healthy, cm.calcHealthFactor(healthy));
         console2.log("  warning     account   ", warning, cm.calcHealthFactor(warning));
         console2.log("  margin-call account   ", marginCall, cm.calcHealthFactor(marginCall));
+        console2.log("  LINK        account   ", linkAccount, linkCm.calcHealthFactor(linkAccount));
     }
 
     /// @notice Crashes the WETH price below the floor so the levered accounts become liquidatable.
@@ -74,14 +88,20 @@ contract SeedScript is Script {
         Addrs memory a = _readManifest();
         if (vm.envOr("USE_CHAINLINK", false)) {
             vm.startBroadcast(DEPLOYER_PK);
-            MockAggregator crashed = new MockAggregator(8, int256(CRASH_PRICE * 1e2), block.timestamp);
-            ChainlinkPriceOracle(a.oracle).setFeed(a.weth, crashed, 7 days);
+            // Mock aggregators carry 8 decimals, so scale the 6-dp crash prices by 1e2.
+            MockAggregator wethCrashed = new MockAggregator(8, int256(CRASH_PRICE * 1e2), block.timestamp);
+            ChainlinkPriceOracle(a.oracle).setFeed(a.weth, wethCrashed, 7 days);
+            MockAggregator linkCrashed = new MockAggregator(8, int256(CRASH_LINK_PRICE * 1e2), block.timestamp);
+            ChainlinkPriceOracle(a.oracle).setFeed(a.link, linkCrashed, 7 days);
             vm.stopBroadcast();
         } else {
-            vm.broadcast(DEPLOYER_PK);
+            vm.startBroadcast(DEPLOYER_PK);
             MockPriceOracle(a.oracle).setPrice(a.weth, CRASH_PRICE);
+            MockPriceOracle(a.oracle).setPrice(a.link, CRASH_LINK_PRICE);
+            vm.stopBroadcast();
         }
         console2.log("Crashed WETH price to (USDC, 6dp)", CRASH_PRICE);
+        console2.log("Crashed LINK price to (USDC, 6dp)", CRASH_LINK_PRICE);
     }
 
     function _seedLiquidity(Addrs memory a) internal {
@@ -99,28 +119,38 @@ contract SeedScript is Script {
         address keeper = vm.addr(KEEPER_PK);
         vm.startBroadcast(KEEPER_PK);
         MockERC20(a.usdc).mint(keeper, 1_000_000e6);
+        // The keeper funds repayment shortfalls through each market's credit manager, so it approves
+        // every market it might liquidate in (not just the primary one).
         IERC20(a.usdc).approve(a.creditManager, type(uint256).max);
+        IERC20(a.usdc).approve(a.linkCreditManager, type(uint256).max);
         vm.stopBroadcast();
     }
 
-    /// @dev Opens a credit account and levers the borrowed USDC into WETH through the whitelisted
-    ///      adapter, exactly as a borrower would.
-    function _openLevered(Addrs memory a, uint256 borrowerPk, uint256 borrow) internal returns (address account) {
+    /// @dev Opens a credit account in the given market and levers the borrowed USDC into that
+    ///      market's collateral through its whitelisted adapter, exactly as a borrower would.
+    function _openLevered(
+        Addrs memory a,
+        address creditManager,
+        address collateralToken,
+        address swapAdapter,
+        uint256 borrowerPk,
+        uint256 collateral,
+        uint256 borrow
+    ) internal returns (address account) {
         address borrower = vm.addr(borrowerPk);
-        CreditManager cm = CreditManager(a.creditManager);
+        CreditManager cm = CreditManager(creditManager);
 
         vm.startBroadcast(borrowerPk);
-        MockERC20(a.weth).mint(borrower, COLLATERAL);
-        IERC20(a.weth).approve(a.creditManager, type(uint256).max);
-        account = cm.openCreditAccount(COLLATERAL, borrow, borrower);
+        MockERC20(collateralToken).mint(borrower, collateral);
+        IERC20(collateralToken).approve(creditManager, type(uint256).max);
+        account = cm.openCreditAccount(collateral, borrow, borrower);
 
         CreditManager.MultiCall[] memory calls = new CreditManager.MultiCall[](2);
-        calls[0] = CreditManager.MultiCall({
-            target: a.usdc, callData: abi.encodeCall(IERC20.approve, (a.swapAdapter, borrow))
-        });
+        calls[0] =
+            CreditManager.MultiCall({target: a.usdc, callData: abi.encodeCall(IERC20.approve, (swapAdapter, borrow))});
         calls[1] = CreditManager.MultiCall({
-            target: a.swapAdapter,
-            callData: abi.encodeCall(UniswapV3Adapter.swapExactInputSingle, (a.usdc, a.weth, FEE, borrow, 0))
+            target: swapAdapter,
+            callData: abi.encodeCall(UniswapV3Adapter.swapExactInputSingle, (a.usdc, collateralToken, FEE, borrow, 0))
         });
         cm.multicall(account, calls);
         vm.stopBroadcast();
@@ -135,7 +165,10 @@ contract SeedScript is Script {
             oracle: vm.parseJsonAddress(json, ".oracle"),
             pool: vm.parseJsonAddress(json, ".pool"),
             creditManager: vm.parseJsonAddress(json, ".creditManager"),
-            swapAdapter: vm.parseJsonAddress(json, ".swapAdapter")
+            swapAdapter: vm.parseJsonAddress(json, ".swapAdapter"),
+            link: vm.parseJsonAddress(json, ".markets[1].collateralToken"),
+            linkCreditManager: vm.parseJsonAddress(json, ".markets[1].creditManager"),
+            linkSwapAdapter: vm.parseJsonAddress(json, ".markets[1].swapAdapter")
         });
     }
 }
