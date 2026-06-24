@@ -93,9 +93,16 @@ the real `ChainlinkPriceOracle` against the live ETH/USD feed, so collateral val
 health move on the real market price.
 
 ```bash
-cp .env.example .env          # then set MAINNET_RPC_URL (any mainnet RPC; a free public one works)
+cp .env.example .env          # then set MAINNET_RPC_URL (see the archive-window note below)
 ./scripts/dev-up.sh --fork --seed
 ```
+
+> **Pick an archive RPC for fork mode.** Opening a margin account clones an account contract, which
+> makes anvil re-read state at the forked block. Free public RPCs only serve recent state (~128
+> blocks, roughly 25 minutes), so a fork session that sits idle past that window starts failing with
+> `Archive requests require a personal token` on new account opens. Use an archive-capable endpoint
+> (Alchemy, Infura, your own node), or just re-run `./scripts/dev-up.sh --fork --seed` to re-fork at
+> the current block. Plain local mode (no `--fork`) never hits this.
 
 Either way the script starts anvil, deploys and wires every contract, seeds a realistic book
 (healthy, warning, and margin-call accounts), and launches all five services. Stop everything with
@@ -113,8 +120,14 @@ Open <http://localhost:3000>.
 ### 4. Connect a wallet
 
 Add a network to MetaMask — **Chain ID `31337`**, **RPC `http://127.0.0.1:8545`** — then use the
-in-app faucet to fund a fresh wallet with mock USDC and WETH. You can now lend, open a margin
-account, borrow, lever, and close, all signing straight to the local chain.
+in-app faucet to fund a fresh wallet with mock USDC and the collateral assets (WETH and LINK, each an
+isolated single-collateral market). You can now lend, open a margin account, borrow, lever, and close,
+all signing straight to the local chain.
+
+> **Restarting anvil?** A fresh chain resets account nonces, so MetaMask's cached nonce goes stale and
+> the next send fails with `replacement transaction underpriced`. Fix it with MetaMask →
+> **Settings → Security and privacy → Clear activity tab data** for the account, which resyncs the
+> nonce against the new chain.
 
 ### 5. Inspect and stress the book
 
@@ -178,8 +191,12 @@ The protocol and the off-chain services are built and run end to end on a local 
   whitelist, access control, Safe + Timelock).
 - Off-chain spine — indexer (viem), api (Hono, REST + WS + SIWE), margin engine (FastAPI), keeper
   (Go), and alerts (Hono + Prometheus).
-- Frontend — wallet connect, faucet, lender deposit/withdraw, and the full borrower flow
-  (open/borrow/repay/add/withdraw/lever/close) signing straight to chain.
+- Multiple markets — more than one collateral runs as its own isolated single-collateral market
+  (WETH and LINK ship by default), all sharing one USDC lending pool. The whole spine is
+  market-aware: the indexer tags accounts by market, the API exposes them at `/markets`, and the
+  keeper routes each account's health read and liquidation to its own credit manager.
+- Frontend — wallet connect, faucet, lender deposit/withdraw, a market selector, and the full
+  borrower flow (open/borrow/repay/add/withdraw/lever/close) signing straight to chain.
 - Local stack — one command boots a clean local chain with a seeded book and a price-crash
   entrypoint that drives a full liquidation cascade.
 - Real-price fork mode — `--fork` runs the whole stack against a mainnet fork, pricing collateral
@@ -197,7 +214,10 @@ logic — the contracts are written interface-first for exactly these steps.
 - **Real swaps against live DEX liquidity** — point the Uniswap/Curve adapters at real routers/pools
   on a fork or mainnet (the adapters already take the venue address). Also removes the close-out
   interest dust seen with the one-way mock router.
-- **Multi-collateral** — register more collateral tokens with their feeds, haircuts, and adapters.
+- **Multi-collateral baskets** — a single account holding several collateral types at once. Today
+  each collateral is its own isolated market; a true cross-collateral basket needs the credit manager
+  to value a mix of assets. Adding another isolated single-collateral market is just config plus one
+  `_deployMarket` call.
 - **Borrower onboarding** — KYC / permissioning layer and credit terms for institutional borrowers.
 - **Admin / risk console** — a UI over the on-chain risk and whitelist setters that already exist.
 - **External audit** — the gate for any real-money deployment.
