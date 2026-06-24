@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"os"
 	"sort"
+
+	"meridian/keeper/internal/keeper"
 )
 
 // SnapshotLister reads the indexer snapshot and returns accounts that are open and not yet
@@ -17,14 +19,16 @@ type SnapshotLister struct {
 
 type snapshotFile struct {
 	Accounts map[string]struct {
-		Account    string `json:"account"`
-		Open       bool   `json:"open"`
-		Liquidated bool   `json:"liquidated"`
+		Account       string `json:"account"`
+		Open          bool   `json:"open"`
+		Liquidated    bool   `json:"liquidated"`
+		CreditManager string `json:"creditManager"`
 	} `json:"accounts"`
 }
 
-// Accounts returns the addresses of open, non-liquidated accounts, sorted for deterministic order.
-func (s SnapshotLister) Accounts(_ context.Context) ([]string, error) {
+// Accounts returns the open, non-liquidated accounts tagged with the credit manager of the market
+// they belong to, sorted by address for deterministic order.
+func (s SnapshotLister) Accounts(_ context.Context) ([]keeper.Account, error) {
 	raw, err := os.ReadFile(s.Path)
 	if err != nil {
 		return nil, err
@@ -35,12 +39,15 @@ func (s SnapshotLister) Accounts(_ context.Context) ([]string, error) {
 		return nil, err
 	}
 
-	accounts := make([]string, 0, len(snapshot.Accounts))
+	accounts := make([]keeper.Account, 0, len(snapshot.Accounts))
 	for _, account := range snapshot.Accounts {
 		if account.Open && !account.Liquidated {
-			accounts = append(accounts, account.Account)
+			accounts = append(accounts, keeper.Account{
+				Address:       account.Account,
+				CreditManager: account.CreditManager,
+			})
 		}
 	}
-	sort.Strings(accounts)
+	sort.Slice(accounts, func(i, j int) bool { return accounts[i].Address < accounts[j].Address })
 	return accounts, nil
 }

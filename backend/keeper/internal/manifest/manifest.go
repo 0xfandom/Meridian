@@ -8,13 +8,25 @@ import (
 	"os"
 )
 
-// Manifest is the subset of contracts/deployments/<network>.json the keeper needs.
-type Manifest struct {
-	Network           string `json:"network"`
-	ChainID           uint64 `json:"chainId"`
-	StartBlock        uint64 `json:"startBlock"`
+// Market is one credit market: the contracts the keeper routes to for a given collateral asset.
+type Market struct {
+	Symbol            string `json:"symbol"`
+	CollateralToken   string `json:"collateralToken"`
 	CreditManager     string `json:"creditManager"`
 	LiquidationModule string `json:"liquidationModule"`
+}
+
+// Manifest is the subset of contracts/deployments/<network>.json the keeper needs. The flat
+// creditManager/liquidationModule fields describe the primary market and are kept for back-compat;
+// Markets lists every market. Manifests written before multi-market support have no markets array,
+// so one is synthesised from the flat fields.
+type Manifest struct {
+	Network           string   `json:"network"`
+	ChainID           uint64   `json:"chainId"`
+	StartBlock        uint64   `json:"startBlock"`
+	CreditManager     string   `json:"creditManager"`
+	LiquidationModule string   `json:"liquidationModule"`
+	Markets           []Market `json:"markets"`
 }
 
 // Load reads and validates a manifest file, returning a precise error when a required address is
@@ -35,6 +47,23 @@ func Load(path string) (Manifest, error) {
 	}
 	if !isHexAddress(m.LiquidationModule) {
 		return Manifest{}, fmt.Errorf("manifest %s: liquidationModule must be a 20-byte hex address", path)
+	}
+
+	// Synthesise a single primary market for manifests written before multi-market support.
+	if len(m.Markets) == 0 {
+		m.Markets = []Market{{
+			Symbol:            "primary",
+			CreditManager:     m.CreditManager,
+			LiquidationModule: m.LiquidationModule,
+		}}
+	}
+	for i, mkt := range m.Markets {
+		if !isHexAddress(mkt.CreditManager) {
+			return Manifest{}, fmt.Errorf("manifest %s: markets[%d].creditManager must be a 20-byte hex address", path, i)
+		}
+		if !isHexAddress(mkt.LiquidationModule) {
+			return Manifest{}, fmt.Errorf("manifest %s: markets[%d].liquidationModule must be a 20-byte hex address", path, i)
+		}
 	}
 
 	return m, nil

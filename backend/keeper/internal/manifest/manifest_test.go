@@ -63,3 +63,45 @@ func TestLoadRejectsMissingFile(t *testing.T) {
 		t.Fatal("expected error for missing file, got nil")
 	}
 }
+
+func TestLoadParsesMarketsArray(t *testing.T) {
+	const linkCM = "0x00000000000000000000000000000000000000d4"
+	const linkModule = "0x00000000000000000000000000000000000000e5"
+	path := writeManifest(t, `{
+		"creditManager": "`+creditManager+`",
+		"liquidationModule": "`+liquidationModule+`",
+		"markets": [
+			{ "symbol": "WETH", "creditManager": "`+creditManager+`", "liquidationModule": "`+liquidationModule+`" },
+			{ "symbol": "LINK", "creditManager": "`+linkCM+`", "liquidationModule": "`+linkModule+`" }
+		]
+	}`)
+
+	m, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(m.Markets) != 2 {
+		t.Fatalf("markets = %d, want 2", len(m.Markets))
+	}
+	if m.Markets[1].Symbol != "LINK" || m.Markets[1].CreditManager != linkCM || m.Markets[1].LiquidationModule != linkModule {
+		t.Errorf("markets[1] = %+v, want LINK %s/%s", m.Markets[1], linkCM, linkModule)
+	}
+}
+
+func TestLoadSynthesisesPrimaryMarketWhenAbsent(t *testing.T) {
+	path := writeManifest(t, `{
+		"creditManager": "`+creditManager+`",
+		"liquidationModule": "`+liquidationModule+`"
+	}`)
+
+	m, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(m.Markets) != 1 {
+		t.Fatalf("markets = %d, want 1 synthesised", len(m.Markets))
+	}
+	if m.Markets[0].CreditManager != creditManager || m.Markets[0].LiquidationModule != liquidationModule {
+		t.Errorf("synthesised market = %+v, want %s/%s", m.Markets[0], creditManager, liquidationModule)
+	}
+}

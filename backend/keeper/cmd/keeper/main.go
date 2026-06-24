@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,6 +27,10 @@ func main() {
 	creditManager := os.Getenv("MERIDIAN_CREDIT_MANAGER_ADDRESS")
 	snapshot := envDefault("INDEXER_SNAPSHOT_PATH", "./indexer-state.json")
 
+	// Map every market's credit manager to its liquidation module so each account is routed to the
+	// right contracts; the default (primary) module/creditManager cover untagged accounts.
+	markets := map[string]string{}
+
 	// Fall back to the deployment manifest for any address not set explicitly; env vars win.
 	if path := os.Getenv("MERIDIAN_DEPLOYMENT"); path != "" {
 		m, err := manifest.Load(path)
@@ -38,6 +43,9 @@ func main() {
 		}
 		if creditManager == "" {
 			creditManager = m.CreditManager
+		}
+		for _, mkt := range m.Markets {
+			markets[strings.ToLower(mkt.CreditManager)] = mkt.LiquidationModule
 		}
 	}
 
@@ -64,8 +72,11 @@ func main() {
 			MaxAttempts: envInt("KEEPER_MAX_ATTEMPTS", 3),
 			Backoff:     time.Duration(envInt("KEEPER_BACKOFF_MS", 1000)) * time.Millisecond,
 		},
-		DryRun: envBool("KEEPER_DRY_RUN", true),
-		Logger: logger,
+		Markets:                  markets,
+		DefaultCreditManager:     creditManager,
+		DefaultLiquidationModule: module,
+		DryRun:                   envBool("KEEPER_DRY_RUN", true),
+		Logger:                   logger,
 	}
 
 	interval := time.Duration(envInt("KEEPER_INTERVAL_MS", 4000)) * time.Millisecond

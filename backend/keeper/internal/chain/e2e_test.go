@@ -53,7 +53,7 @@ func TestLiquidateSubmitsOnChain(t *testing.T) {
 	}
 
 	account := "0x00000000000000000000000000000000000000A1"
-	txHash, err := client.Liquidate(ctx, account)
+	txHash, err := client.Liquidate(ctx, account, "")
 	if err != nil {
 		t.Fatalf("Liquidate: %v", err)
 	}
