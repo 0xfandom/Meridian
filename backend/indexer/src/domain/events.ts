@@ -20,6 +20,11 @@ export type IndexedEvent =
       owner: Address;
       collateral: bigint;
       borrowed: bigint;
+      // The market the account belongs to, stamped from the emitting credit manager at collection.
+      // Optional so historical fixtures and pre-multi-market snapshots remain valid.
+      creditManager?: Address;
+      collateralToken?: Address;
+      symbol?: string;
     } & WithMeta)
   | ({ kind: "increaseDebt"; account: Address; amount: bigint } & WithMeta)
   | ({

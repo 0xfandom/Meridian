@@ -92,4 +92,23 @@ describe("applyEvent", () => {
     expect(before.pool.totalDeposited).toBe(0n);
     expect(after.pool.totalDeposited).toBe(10n);
   });
+
+  it("records the market an account was opened in", () => {
+    const COLLATERAL = "0x00000000000000000000000000000000000000E5" as Address;
+    const state = applyEvent(initialState(), {
+      kind: "openAccount",
+      account: ACCOUNT,
+      owner: OWNER,
+      collateral: 100n,
+      borrowed: 800n,
+      creditManager: CM,
+      collateralToken: COLLATERAL,
+      symbol: "LINK",
+      meta: meta(2, 1),
+    });
+    const account = state.accounts[ACCOUNT];
+    expect(account!.creditManager).toBe(CM);
+    expect(account!.collateralToken).toBe(COLLATERAL);
+    expect(account!.symbol).toBe("LINK");
+  });
 });

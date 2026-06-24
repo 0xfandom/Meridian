@@ -34,6 +34,9 @@ export function applyEvent(state: IndexerState, event: IndexedEvent): IndexerSta
         collateralDeposited: event.collateral,
         open: true,
         liquidated: false,
+        creditManager: event.creditManager,
+        collateralToken: event.collateralToken,
+        symbol: event.symbol,
       };
       break;
     case "increaseDebt":
