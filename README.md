@@ -154,6 +154,123 @@ forge test
 forge fmt --check
 ```
 
+## Walkthrough — lend, borrow, lever, liquidate
+
+A complete run, from a fresh start to a live liquidation, with the exact amount to enter and the
+change you should see at every step. It assumes the stack and web app are up (Quick start steps 1–4)
+and your wallet is funded from the faucet.
+
+> **Two things decide whether the demo works.** (1) Start the stack with `KEEPER_DRY_RUN=false` or the
+> keeper only watches and never liquidates — the crash will do nothing. (2) Use local mode (plain
+> `--seed`, no `--fork`): a clean chain with mock prices, nothing that can expire mid-demo.
+
+### 1. Lend USDC (the lender side)
+
+Go to **Earn**. Only USDC can be supplied (one real USDC pool).
+
+| Field | Enter | Action |
+| --- | --- | --- |
+| Supply amount | **10,000 USDC** | Approve USDC (first time) → Supply |
+
+**Observe:** the pool size moves from `500,000` → `510,000` supplied. Check with
+`curl -s http://127.0.0.1:3001/pools | jq`.
+
+### 2. Open a margin account (the borrower side)
+
+Go to **Borrow**, pick the **WETH market**.
+
+| Field | Enter | Why |
+| --- | --- | --- |
+| Collateral | **5 WETH** | = $10,000 at the $2,000 mock price — your equity |
+| Borrow | **5,000 USDC** | Drawn from the lender pool against the collateral |
+
+Approve WETH → Open account. **Observe:** health factor **2.70**, leverage **1.50x ($15k gross)**,
+liquidation price **$111.11** (the drawn USDC is stable backing, so WETH would have to crash ~94%).
+
+### 3. Lever up
+
+Click **Lever up** — it swaps the drawn USDC into more WETH inside the account.
+
+| What changes | Before → After | Why |
+| --- | --- | --- |
+| Collateral | 5 WETH → ~7 WETH | Drawn USDC swapped into WETH |
+| Liquidation price | $111 → ~$650 | Stable cushion gone — all backing now moves with the price |
+| Health / equity / leverage | ≈ unchanged | Swapped $5k of one asset for $5k of another |
+
+The lesson: leverage didn't change today's numbers, it moved your **liquidation price**. Health factor
+tells you where you stand now; liquidation price tells you how much room you have if the market moves.
+
+> **Closing a levered account fails locally.** After levering, the account holds mostly WETH but the
+> debt is in USDC, and the mock router is one-way (USDC→WETH only), so it can't swap back to repay. To
+> demo a clean Close, open a position and Close it **without** levering. Real two-way DEX liquidity (a
+> fork/mainnet) removes this.
+
+### 4. Crash the market (the seeded liquidations)
+
+In a third terminal:
+
+```bash
+cd contracts
+forge script script/Seed.s.sol:SeedScript --sig "crash()" \
+  --rpc-url http://127.0.0.1:8545 --broadcast
+```
+
+This lowers the prices the protocol sees; the keeper acts on its ~4-second loop.
+
+| What happens | Value | Result |
+| --- | --- | --- |
+| WETH price | $2,000 → $1,500 | A 25% drop, calibrated for the fragile seeded accounts |
+| LINK price | → $5 | The LINK seed account goes deeply underwater |
+| Liquidated | 3 accounts | warning, margin-call, and LINK seed — each repaid, debt → 0 |
+| Your account | survives | Its liquidation price (~$650) is below $1,500 |
+
+**Verify:** `curl -s http://127.0.0.1:3001/liquidations | jq` lists three records. The pool was made
+whole — lenders lost nothing.
+
+### 5. See the liquidation report on your own wallet
+
+The standard crash spares your account. To liquidate it and flip the screen to the read-only report
+card, drop WETH below your liquidation price by setting it to $300 directly on the oracle:
+
+```bash
+# Addresses on a fresh local dev-up are deterministic; if a deploy differs, fetch them:
+#   ORACLE=$(curl -s http://127.0.0.1:3001/deployment | jq -r .addresses.oracle)
+#   WETH=$(curl -s http://127.0.0.1:3001/markets | jq -r '.[]|select(.symbol=="WETH").collateralToken')
+cast send 0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9 \
+  "setPrice(address,uint256)" \
+  0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512 300000000 \
+  --rpc-url http://127.0.0.1:8545 \
+  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+```
+
+`300000000` is $300 in 6-decimal USDC terms; `0xac0974…` is anvil account 0, the oracle owner.
+**Observe:** within ~4 seconds the keeper repays your debt and seizes your WETH; refresh the Borrow
+page and it flips to the **liquidation report card** — collateral seized, debt repaid, keeper address,
+block, and tx, with the outcome breakdown (Debt to pool = Cleared · Your collateral = Seized · Lender
+funds = Protected).
+
+### 6. The LINK market (multi-collateral)
+
+Back on **Borrow**, use the market selector to switch to **LINK**. Open a second account — post e.g.
+**200 LINK** and borrow USDC. **Observe:** a separate isolated account in the LINK market, drawing from
+the **same** USDC pool. Each collateral is its own isolated market; one shared pool.
+
+### 7. Verify everything from the API
+
+```bash
+curl -s http://127.0.0.1:3001/pools        | jq   # pool totals + live prices
+curl -s http://127.0.0.1:3001/accounts     | jq   # every account: health, collateral, debt, liquidated
+curl -s http://127.0.0.1:3001/markets      | jq   # WETH and LINK markets + marks
+curl -s http://127.0.0.1:3001/liquidations | jq   # every recorded liquidation
+```
+
+To run it all again, `Ctrl-C` the stack and start from Quick start step 2 — a fresh `dev-up` gives a
+clean chain and a freshly seeded book.
+
+> **Restarting anvil?** A fresh chain resets nonces, so MetaMask may throw
+> `replacement transaction underpriced`. Fix it with MetaMask → Settings → Security and privacy →
+> **Clear activity tab data** for the account.
+
 ## Services and surfaces
 
 | Service | URL | Stack |
