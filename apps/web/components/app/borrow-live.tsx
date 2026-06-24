@@ -117,35 +117,14 @@ export function BorrowLive() {
             <BrandBand />
           </div>
         ) : (
-          <PositionCard account={account} />
+          <div className="flex flex-col gap-5">
+            <PositionCard account={account} />
+            <ManagePosition />
+            <BrandBand />
+          </div>
         )}
       </div>
     </section>
-  );
-}
-
-// A small drawn sad face (not an emoji) for the liquidation report.
-function SadFace({ size = 72, className = "" }: { size?: number; className?: string }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 64 64"
-      fill="none"
-      aria-hidden="true"
-      className={className}
-    >
-      <circle cx="32" cy="32" r="29" fill="#fff" stroke="#e11d2a" strokeWidth="3" />
-      <circle cx="22.5" cy="27" r="3.4" fill="#0a0a0a" />
-      <circle cx="41.5" cy="27" r="3.4" fill="#0a0a0a" />
-      <path
-        d="M20 45 Q32 33 44 45"
-        stroke="#0a0a0a"
-        strokeWidth="3.2"
-        strokeLinecap="round"
-        fill="none"
-      />
-    </svg>
   );
 }
 
@@ -232,7 +211,13 @@ function LiquidationReportCard({
       {/* what it means */}
       <div className="flex flex-col rounded-2xl border border-hair/70 bg-white p-6 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-          <SadFace size={92} />
+          <div
+            aria-hidden="true"
+            className="flex h-[104px] w-[104px] items-center justify-center rounded-full bg-red/10 font-sans font-black leading-none text-red"
+            style={{ fontSize: "72px" }}
+          >
+            !
+          </div>
           <div className="font-sans text-[20px] font-extrabold tracking-tight text-ink">
             Position wiped out
           </div>
@@ -369,6 +354,60 @@ function BorrowHowItWorks() {
         Meridian is a non-custodial prime brokerage: lenders supply USDC, you borrow against
         collateral and trade with leverage — all inside an isolated account that can only touch
         whitelisted protocols. Your funds never leave your control.
+      </p>
+      <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {steps.map((s) => (
+          <div key={s.n} className="rounded-xl border border-hair/70 bg-off/40 p-4">
+            <div className="font-sans text-[22px] font-extrabold tracking-tight text-red">{s.n}</div>
+            <div className="mt-1 font-sans text-[14.5px] font-bold tracking-tight text-ink">
+              {s.t}
+            </div>
+            <p className="mt-1.5 text-[12px] leading-relaxed text-ink-m">{s.d}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Educational band shown under an open position: how to read it and manage the risk.
+function ManagePosition() {
+  const steps = [
+    {
+      n: "01",
+      t: "Watch health",
+      d: "Health factor is risk-adjusted collateral over debt. Keep it above 1.0 — the liquidation price is the hard floor where a keeper steps in.",
+    },
+    {
+      n: "02",
+      t: "Add exposure",
+      d: "Borrow more or lever up to swap drawn USDC into more collateral. Both raise your position — and pull the liquidation price closer.",
+    },
+    {
+      n: "03",
+      t: "De-risk",
+      d: "Repay debt or add collateral to push health back up and the liquidation price away. One health check gates every action.",
+    },
+    {
+      n: "04",
+      t: "Exit anytime",
+      d: "Close repays the debt and returns your collateral in a single call. Funds never leave your isolated account on trust.",
+    },
+  ];
+
+  return (
+    <div className="rounded-2xl border border-hair/70 bg-white p-6 lg:p-8 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
+      <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-f">Managing the position</div>
+      <h2
+        className="mt-1.5 font-sans font-extrabold leading-[1.02] tracking-tight text-ink"
+        style={{ fontSize: "clamp(1.5rem, 3vw, 2.3rem)" }}
+      >
+        Reading your risk<span className="text-red">.</span>
+      </h2>
+      <p className="mt-2 max-w-[640px] text-[13.5px] leading-relaxed text-ink-m">
+        Everything above is read straight from your on-chain margin account. Health factor tells you
+        where you stand now; the liquidation price tells you how much room you have if the market
+        moves. Use these actions to steer between them.
       </p>
       <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {steps.map((s) => (
