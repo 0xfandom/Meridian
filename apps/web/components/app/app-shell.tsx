@@ -163,21 +163,13 @@ const INITIAL_POOLS: Pool[] = [
   {
     tier: "Senior",
     apy: 0.082,
-    supplied: 250_000,
+    supplied: 0,
     tvl: 540_000_000,
     util: 0.78,
-    desc: "First claim on repayments. Lower risk, steady yield.",
-  },
-  {
-    tier: "Junior",
-    apy: 0.196,
-    supplied: 120_000,
-    tvl: 210_000_000,
-    util: 0.86,
-    desc: "First-loss capital. Higher yield, absorbs defaults first.",
+    desc: "Supply USDC and earn the borrow rate, priced by pool utilization. Withdraw idle liquidity at any time.",
   },
 ];
-const INITIAL_USDC = 600_000; // wallet stablecoin available to supply
+const INITIAL_USDC = 600_000; // wallet stablecoin available to supply (demo mode only)
 
 /* ---------- formatting ---------- */
 function fmtUSD(n: number) {
@@ -1852,28 +1844,23 @@ function EarnView() {
   const [usdc, setUsdc] = useState(INITIAL_USDC);
   const [act, setAct] = useState<EarnAction>(null);
 
-  // The live USDC pool maps to the Senior tranche (first claim on repayments). When the backend is
-  // reachable, show its real size and utilization; APY and the Junior tranche stay placeholders.
+  // The lender side is a single live USDC pool. When the backend is reachable, show its real size
+  // and utilization; the APY stays a placeholder until the rate model is surfaced.
   const live = useProtocolStats();
   useEffect(() => {
     if (!live) return;
-    setPools((prev) =>
-      prev.map((p) => (p.tier === "Senior" ? { ...p, tvl: live.tvl, util: live.utilization } : p)),
-    );
+    setPools((prev) => prev.map((p) => ({ ...p, tvl: live.tvl, util: live.utilization })));
   }, [live]);
 
-  // With a real wallet connected, the Senior tranche is the live pool: the wallet's USDC is the
-  // supply cap and its pool shares are the supplied amount. The Junior tranche has no on-chain
-  // counterpart, so it stays mock (and the action modal discloses that).
+  // With a real wallet connected, the pool's figures come from chain: its shares are the supplied
+  // amount, and the wallet's USDC is the supply cap.
   const { isConnected } = useWallet();
   const balances = useWalletBalances();
   const position = useLenderPosition();
   const actions = usePoolActions();
   useEffect(() => {
     if (!isConnected || !position) return;
-    setPools((prev) =>
-      prev.map((p) => (p.tier === "Senior" ? { ...p, supplied: position.supplied } : p)),
-    );
+    setPools((prev) => prev.map((p) => ({ ...p, supplied: position.supplied })));
   }, [isConnected, position]);
 
   const openAct = (a: EarnAction) => {
@@ -1901,8 +1888,10 @@ function EarnView() {
     setAct(null);
   }
 
-  const topApy = Math.max(...pools.map((p) => p.apy));
-  const bestIdx = pools.reduce((bi, p, i, arr) => (p.apy > arr[bi].apy ? i : bi), 0);
+  // A single live USDC pool backs the lender side; every figure reads from it.
+  const pool = pools[0]!;
+  const supplyIdx = 0;
+  const headlineApy = pool.apy;
 
   return (
     <section className="rounded-b-[26px] bg-[#f1f1ef] px-5 pb-7 pt-3 lg:px-9 lg:pb-9 lg:pt-4">
@@ -1921,8 +1910,7 @@ function EarnView() {
         Grow your capital<span className="text-red">.</span>
       </h1>
       <p className="mt-1.5 text-[13.5px] text-ink-m">
-        Supply USDC to the senior or junior tranche — yield priced by utilization, custody stays in
-        your wallet.
+        Supply USDC to the lending pool — yield priced by utilization, custody stays in your wallet.
       </p>
 
       {/* row 1: supply allocation + CTA */}
@@ -1930,45 +1918,39 @@ function EarnView() {
         <div className="flex flex-col rounded-2xl border border-hair/70 bg-white p-6 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
           <div className="flex items-center justify-between">
             <h2 className="font-sans text-[16px] font-bold tracking-tight text-ink">
-              Supply allocation
+              USDC lending pool
             </h2>
-            <span className="font-mono text-[12px] text-ink-m">{fmtUSD(e.supplied)}</span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-[#e7f6ee] px-2.5 py-1 text-[11px] font-semibold text-[#0f9d6e]">
+              {fmtPct(pool.apy)} APY
+            </span>
           </div>
-          <div className="mt-5 flex flex-col gap-5">
-            {pools.map((p) => {
-              const tone = p.tier === "Senior" ? "#0a0a0a" : "#e11d2a";
-              const pct = e.supplied > 0 ? (p.supplied / e.supplied) * 100 : 0;
-              return (
-                <div key={p.tier}>
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="h-2.5 w-2.5 rounded-full" style={{ background: tone }} />
-                      <span className="text-[13px] font-semibold text-ink">{p.tier} tranche</span>
-                      <span className="font-mono text-[11px] text-[#0f9d6e]">
-                        {fmtPct(p.apy)} APY
-                      </span>
-                    </div>
-                    <span className="font-mono text-[13px] font-semibold text-ink">
-                      {pct.toFixed(0)}%
-                    </span>
-                  </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-off">
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{ width: `${pct}%`, background: tone }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
+          <div className="mt-5">
+            <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-m">
+              Pool size
+            </div>
+            <div className="mt-1 font-sans text-[34px] font-extrabold leading-none tracking-tight text-ink">
+              {fmtUSD(pool.tvl)}
+            </div>
+          </div>
+          <div className="mt-5">
+            <div className="mb-1.5 flex items-center justify-between font-mono text-[11px] uppercase tracking-[0.12em] text-ink-m">
+              <span>Utilization</span>
+              <span className="text-ink">{fmtPct(pool.util)}</span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-off">
+              <div
+                className="h-full rounded-full bg-ink transition-all duration-500"
+                style={{ width: `${pool.util * 100}%` }}
+              />
+            </div>
           </div>
           <div className="mt-auto grid grid-cols-2 gap-4 border-t border-hair-lt pt-5">
             <div>
               <div className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-ink-m">
-                Blended APY
+                Your supply
               </div>
-              <div className="mt-1 font-sans text-[18px] font-bold tracking-tight text-[#0f9d6e]">
-                {fmtPct(e.blendedApy)}
+              <div className="mt-1 font-sans text-[18px] font-bold tracking-tight text-ink">
+                {fmtUSD(e.supplied)}
               </div>
             </div>
             <div>
@@ -1976,7 +1958,7 @@ function EarnView() {
                 Wallet USDC
               </div>
               <div className="mt-1 font-sans text-[18px] font-bold tracking-tight text-ink">
-                {fmtUSD(usdc)}
+                {fmtUSD(isConnected ? (balances?.usdc ?? 0) : usdc)}
               </div>
             </div>
           </div>
@@ -1993,12 +1975,13 @@ function EarnView() {
               Put capital to work
             </h3>
             <p className="mt-1.5 max-w-[260px] text-[13px] leading-relaxed text-white/80">
-              Earn up to {fmtPct(topApy)} APY supplying USDC. Withdraw anytime, fully non-custodial.
+              Earn up to {fmtPct(headlineApy)} APY supplying USDC. Withdraw anytime, fully
+              non-custodial.
             </p>
           </div>
           <GlassButton
             variant="light"
-            onClick={() => openAct({ idx: bestIdx, mode: "supply" })}
+            onClick={() => openAct({ idx: supplyIdx, mode: "supply" })}
             className="mt-5 w-fit px-5 py-2.5 text-[14px] hover:-translate-y-0.5"
           >
             Supply USDC <ArrowUpRight size={15} strokeWidth={2.5} />
@@ -2010,7 +1993,7 @@ function EarnView() {
       <div className="mt-3 grid gap-3 lg:grid-cols-[1.6fr_1fr]">
         <div className="flex flex-col gap-3">
           {pools.map((p, i) => {
-            const tone = p.tier === "Senior" ? "#0a0a0a" : "#e11d2a";
+            const tone = "#0a0a0a";
             return (
               <div
                 key={p.tier}
@@ -2023,9 +2006,9 @@ function EarnView() {
                       style={{ background: tone + "1f", color: tone }}
                     >
                       <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone }} />
-                      {p.tier} tranche
+                      USDC pool
                     </span>
-                    <p className="mt-3 max-w-[320px] text-[13px] leading-snug text-ink-s">
+                    <p className="mt-3 max-w-[360px] text-[13px] leading-snug text-ink-s">
                       {p.desc}
                     </p>
                   </div>
@@ -2086,29 +2069,30 @@ function EarnView() {
               value={e.annualYield}
               cls="text-[22px] text-[#0f9d6e]"
             />
-            <BigStat label="Wallet USDC" value={usdc} cls="text-[22px] text-ink" />
+            <BigStat
+              label="Wallet USDC"
+              value={isConnected ? (balances?.usdc ?? 0) : usdc}
+              cls="text-[22px] text-ink"
+            />
           </div>
 
-          {/* per-tranche breakdown */}
+          {/* position breakdown */}
           <div className="flex flex-col gap-2.5 border-t border-hair-lt pt-4">
             <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-f">
-              Your tranches
+              Your position
             </div>
-            {pools.map((p) => {
-              const tone = p.tier === "Senior" ? "#0a0a0a" : "#e11d2a";
-              return (
-                <div key={p.tier} className="flex items-center justify-between">
-                  <span className="flex items-center gap-2 text-[13px] font-medium text-ink">
-                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: tone }} />
-                    {p.tier}
-                    <span className="font-mono text-[11px] text-[#0f9d6e]">{fmtPct(p.apy)}</span>
-                  </span>
-                  <span className="font-mono text-[13px] font-semibold tabular-nums text-ink">
-                    {fmtUSD(p.supplied)}
-                  </span>
-                </div>
-              );
-            })}
+            {pools.map((p) => (
+              <div key={p.tier} className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-[13px] font-medium text-ink">
+                  <span className="h-2.5 w-2.5 rounded-full bg-ink" />
+                  USDC pool
+                  <span className="font-mono text-[11px] text-[#0f9d6e]">{fmtPct(p.apy)}</span>
+                </span>
+                <span className="font-mono text-[13px] font-semibold tabular-nums text-ink">
+                  {fmtUSD(p.supplied)}
+                </span>
+              </div>
+            ))}
           </div>
 
           {/* projected */}
@@ -2133,7 +2117,7 @@ function EarnView() {
             {
               n: "01",
               t: "Supply",
-              d: "Deposit USDC into the senior or junior tranche. Pick safety or upside.",
+              d: "Deposit USDC into the lending pool to earn the borrow rate, set by utilization.",
             },
             {
               n: "02",
