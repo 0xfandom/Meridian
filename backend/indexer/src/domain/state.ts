@@ -23,6 +23,18 @@ export interface AccountState {
   creditManager?: Address;
   collateralToken?: Address;
   symbol?: string;
+  // For a basket-market account: the live per-collateral balances, read from chain each poll. The
+  // single `collateralDeposited` above is event-sourced and only meaningful for one collateral, so
+  // basket consumers read this instead.
+  collaterals?: AccountCollateral[];
+}
+
+/// A live balance of one collateral asset held by an account, read from chain during enrichment.
+export interface AccountCollateral {
+  token: Address;
+  symbol: string;
+  decimals: number;
+  amount: bigint;
 }
 
 /// A recorded liquidation, sourced from the credit manager's economic event.

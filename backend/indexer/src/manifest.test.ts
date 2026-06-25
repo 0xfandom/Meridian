@@ -13,6 +13,18 @@ const WETH = "0x00000000000000000000000000000000000000e5";
 const LINK = "0x00000000000000000000000000000000000000f6";
 const LINK_CREDIT_MANAGER = "0x0000000000000000000000000000000000000a07";
 const LINK_LIQUIDATION_MODULE = "0x0000000000000000000000000000000000000b08";
+const BASKET_CREDIT_MANAGER = "0x0000000000000000000000000000000000000c09";
+const BASKET_LIQUIDATION_MODULE = "0x0000000000000000000000000000000000000d10";
+
+const basketMarket = {
+  creditManager: BASKET_CREDIT_MANAGER,
+  liquidationModule: BASKET_LIQUIDATION_MODULE,
+  primaryCollateral: WETH,
+  collaterals: [
+    { symbol: "WETH", collateralToken: WETH, decimals: 18 },
+    { symbol: "LINK", collateralToken: LINK, decimals: 18 },
+  ],
+};
 
 function writeManifest(dir: string, body: Record<string, unknown>): string {
   const path = join(dir, "local.json");
@@ -87,6 +99,30 @@ describe("deployment manifest", () => {
       creditManager: LINK_CREDIT_MANAGER,
       liquidationModule: LINK_LIQUIDATION_MODULE,
     });
+  });
+
+  it("appends the basket market with its collateral set", () => {
+    const manifest = loadManifest(writeManifest(dir, { ...validBody, basketMarket }));
+    expect(manifest.markets).toHaveLength(3);
+    const basket = manifest.markets[2];
+    expect(basket?.symbol).toBe("BASKET");
+    expect(basket?.creditManager).toBe(BASKET_CREDIT_MANAGER);
+    expect(basket?.collateralToken).toBe(WETH); // primary
+    expect(basket?.collaterals).toEqual([
+      { symbol: "WETH", collateralToken: WETH, decimals: 18 },
+      { symbol: "LINK", collateralToken: LINK, decimals: 18 },
+    ]);
+  });
+
+  it("exposes the basket market to the indexer config", () => {
+    const path = writeManifest(dir, { ...validBody, basketMarket });
+    const config = loadConfig({
+      INDEXER_RPC_URL: "http://localhost:8545",
+      MERIDIAN_DEPLOYMENT: path,
+    } as NodeJS.ProcessEnv);
+    expect(config?.markets).toHaveLength(3);
+    expect(config?.markets[2]?.symbol).toBe("BASKET");
+    expect(config?.markets[2]?.collaterals).toHaveLength(2);
   });
 
   it("synthesises a primary market from the flat fields when markets is absent", () => {

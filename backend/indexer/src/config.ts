@@ -1,13 +1,15 @@
 import type { Address } from "./domain/events.js";
-import { type DeploymentManifest, loadManifest } from "./manifest.js";
+import { type DeploymentManifest, type ManifestCollateral, loadManifest } from "./manifest.js";
 
 /// One credit market the indexer watches: a collateral asset and its credit/liquidation contracts.
-/// The pool and oracle are shared and live on the config root.
+/// The pool and oracle are shared and live on the config root. `collaterals` is set for a basket
+/// market (its full asset set) and undefined for single-collateral markets.
 export interface MarketConfig {
   symbol: string;
   collateralToken: Address;
   creditManager: Address;
   liquidationModule: Address;
+  collaterals?: ManifestCollateral[];
 }
 
 export interface IndexerConfig {
@@ -96,6 +98,7 @@ function resolveMarkets(
       collateralToken: primary.collateralToken ?? first.collateralToken,
       creditManager: primary.creditManager,
       liquidationModule: primary.liquidationModule,
+      collaterals: first.collaterals,
     },
     ...markets.slice(1),
   ];

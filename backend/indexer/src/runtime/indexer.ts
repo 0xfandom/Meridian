@@ -2,10 +2,12 @@ import { createPublicClient, http, type PublicClient } from "viem";
 import {
   creditManagerAbi,
   creditManagerReadAbi,
+  erc20Abi,
   liquidationModuleAbi,
   poolAbi,
   priceOracleAbi,
 } from "../abis/meridian.js";
+import type { ManifestCollateral } from "../manifest.js";
 import type { IndexerConfig } from "../config.js";
 import type { Address, IndexedEvent } from "../domain/events.js";
 import { applyEvent } from "../domain/reducer.js";
@@ -90,11 +92,57 @@ async function enrich(
     );
     const healthByAccount = new Map(healths.map((h) => [h.account, h.hf]));
 
+    // For basket-market accounts, read the live balance of every collateral in the set. Keyed by the
+    // basket credit manager so each account reads only its own market's assets.
+    const basketByManager = new Map<string, ManifestCollateral[]>();
+    for (const m of config.markets) {
+      if (m.collaterals && m.collaterals.length > 0) {
+        basketByManager.set(m.creditManager.toLowerCase(), m.collaterals);
+      }
+    }
+    const basketAccounts = open.filter(
+      (a) => a.creditManager && basketByManager.has(a.creditManager.toLowerCase()),
+    );
+    const collateralReads = await Promise.all(
+      basketAccounts.map(async (a) => {
+        const set = basketByManager.get((a.creditManager as Address).toLowerCase()) ?? [];
+        const balances = await Promise.all(
+          set.map((c) =>
+            client
+              .readContract({
+                address: c.collateralToken,
+                abi: erc20Abi,
+                functionName: "balanceOf",
+                args: [a.account],
+              })
+              .then((amount) => ({
+                token: c.collateralToken,
+                symbol: c.symbol,
+                decimals: c.decimals,
+                amount,
+              }))
+              .catch(() => ({
+                token: c.collateralToken,
+                symbol: c.symbol,
+                decimals: c.decimals,
+                amount: 0n,
+              })),
+          ),
+        );
+        return { account: a.account, collaterals: balances };
+      }),
+    );
+    const collateralsByAccount = new Map(collateralReads.map((r) => [r.account, r.collaterals]));
+
     const accounts = Object.fromEntries(
       Object.entries(state.accounts).map(([address, account]) => [
         address,
         account.open && !account.liquidated
-          ? { ...account, healthFactorWad: healthByAccount.get(account.account) }
+          ? {
+              ...account,
+              healthFactorWad: healthByAccount.get(account.account),
+              collaterals: collateralsByAccount.get(account.account) ?? account.collaterals,
+            }
           : { ...account, healthFactorWad: undefined },
       ]),
     );
