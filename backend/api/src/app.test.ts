@@ -202,6 +202,89 @@ describe("API routes", () => {
     expect(accounts[0]?.collateralToken).toBe(LINK);
   });
 
+  it("serves the basket market's collaterals and a basket account's per-asset balances", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "meridian-api-basket-"));
+    const snapPath = join(dir, "indexer-state.json");
+    const WETH = "0x000000000000000000000000000000000000aaaa";
+    const LINK = "0x000000000000000000000000000000000000bbbb";
+    const BCM = "0x000000000000000000000000000000000000ccdd"; // basket credit manager
+    writeFileSync(
+      snapPath,
+      JSON.stringify({
+        pool: { totalDeposited: "1000n", totalBorrowed: "700n", cumulativeInterestRepaid: "0n" },
+        accounts: {
+          [ACCOUNT]: {
+            account: ACCOUNT,
+            owner: OWNER,
+            facePrincipal: "700n",
+            collateralDeposited: "0n",
+            open: true,
+            liquidated: false,
+            symbol: "BASKET",
+            collateralToken: WETH,
+            creditManager: BCM,
+            collaterals: [
+              { token: WETH, symbol: "WETH", decimals: 18, amount: "5000000000000000000n" },
+              { token: LINK, symbol: "LINK", decimals: 18, amount: "100000000000000000000n" },
+            ],
+          },
+        },
+        liquidations: [],
+        lastBlock: "5n",
+        prices: { [WETH]: "2000000000n", [LINK]: "8000000n" },
+      }),
+    );
+    const manifestPath = join(dir, "local.json");
+    writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        network: "local",
+        chainId: 31337,
+        startBlock: 0,
+        pool: "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
+        markets: [],
+        basketMarket: {
+          creditManager: BCM,
+          creditFacade: "0x0000000000000000000000000000000000000b01",
+          liquidationModule: "0x0000000000000000000000000000000000000b02",
+          swapAdapter: "0x0000000000000000000000000000000000000b03",
+          primaryCollateral: WETH,
+          collaterals: [
+            { symbol: "WETH", collateralToken: WETH, decimals: 18 },
+            { symbol: "LINK", collateralToken: LINK, decimals: 18 },
+          ],
+        },
+      }),
+    );
+    const app = createApp({
+      config: loadConfig({
+        INDEXER_SNAPSHOT_PATH: snapPath,
+        MERIDIAN_DEPLOYMENT: manifestPath,
+        API_SESSION_SECRET: "test-secret",
+      } as NodeJS.ProcessEnv),
+      source: new SnapshotSource(snapPath),
+      nonces: new NonceStore(),
+      now: () => NOW,
+    });
+
+    const markets = (await (await app.request("/markets")).json()) as Array<{
+      symbol: string;
+      collaterals?: Array<{ symbol: string; priceUsdc: string }>;
+    }>;
+    const basket = markets.find((m) => m.symbol === "BASKET");
+    expect(basket?.collaterals).toHaveLength(2);
+    expect(basket?.collaterals?.find((c) => c.symbol === "LINK")?.priceUsdc).toBe("8000000");
+
+    const accounts = (await (await app.request("/accounts")).json()) as Array<{
+      symbol: string;
+      collaterals?: Array<{ symbol: string; amount: string }>;
+    }>;
+    expect(accounts[0]?.symbol).toBe("BASKET");
+    expect(accounts[0]?.collaterals).toHaveLength(2);
+    expect(accounts[0]?.collaterals?.[1]?.symbol).toBe("LINK");
+    expect(accounts[0]?.collaterals?.[1]?.amount).toBe("100000000000000000000");
+  });
+
   it("runs the SIWE login flow and authorizes /me", async () => {
     const app = buildApp();
 

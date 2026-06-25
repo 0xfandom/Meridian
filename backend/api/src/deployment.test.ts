@@ -88,6 +88,44 @@ describe("loadDeployment", () => {
     expect(info?.markets[0]?.decimals).toBe(18);
   });
 
+  it("appends the basket market with its collateral set", () => {
+    const path = writeManifest({
+      network: "local",
+      chainId: 31337,
+      startBlock: 0,
+      pool: POOL,
+      markets: [
+        {
+          symbol: "WETH",
+          decimals: 18,
+          collateralToken: USDC,
+          creditManager: POOL,
+          creditFacade: USDC,
+          liquidationModule: POOL,
+          swapAdapter: USDC,
+        },
+      ],
+      basketMarket: {
+        creditManager: POOL,
+        creditFacade: USDC,
+        liquidationModule: POOL,
+        swapAdapter: USDC,
+        primaryCollateral: USDC,
+        collaterals: [
+          { symbol: "WETH", collateralToken: USDC, decimals: 18 },
+          { symbol: "LINK", collateralToken: POOL, decimals: 18 },
+        ],
+      },
+    });
+    const info = loadDeployment(path);
+    expect(info?.markets).toHaveLength(2); // WETH + BASKET
+    const basket = info?.markets.find((m) => m.symbol === "BASKET");
+    expect(basket?.collateralToken).toBe(USDC); // primary
+    expect(basket?.collaterals).toHaveLength(2);
+    expect(basket?.collaterals?.[1]?.symbol).toBe("LINK");
+    expect(basket?.collaterals?.[1]?.collateralToken).toBe(POOL);
+  });
+
   it("skips malformed markets and defaults to an empty list when absent", () => {
     expect(loadDeployment(writeManifest({ pool: POOL }))?.markets).toEqual([]);
     const path = writeManifest({

@@ -26,8 +26,17 @@ export function poolView(state: ProtocolState): PoolView {
   };
 }
 
+/// One collateral of a basket market, joined with its live mark.
+export interface MarketCollateralView {
+  symbol: string;
+  collateralToken: Address;
+  decimals: number;
+  priceUsdc: bigint;
+}
+
 /// A credit market joined with its live collateral mark. The market list comes from the deployment
-/// manifest; the price comes from the indexer snapshot.
+/// manifest; the price comes from the indexer snapshot. A basket market also lists `collaterals`,
+/// each with its own live mark.
 export interface MarketView {
   symbol: string;
   collateralToken: Address;
@@ -37,6 +46,7 @@ export interface MarketView {
   swapAdapter: Address;
   decimals: number;
   priceUsdc: bigint;
+  collaterals?: MarketCollateralView[];
 }
 
 export function marketViews(deployment: DeploymentInfo | null, state: ProtocolState): MarketView[] {
@@ -50,6 +60,16 @@ export function marketViews(deployment: DeploymentInfo | null, state: ProtocolSt
     swapAdapter: m.swapAdapter,
     decimals: m.decimals,
     priceUsdc: state.prices?.[m.collateralToken] ?? 0n,
+    ...(m.collaterals
+      ? {
+          collaterals: m.collaterals.map((c) => ({
+            symbol: c.symbol,
+            collateralToken: c.collateralToken,
+            decimals: c.decimals,
+            priceUsdc: state.prices?.[c.collateralToken] ?? 0n,
+          })),
+        }
+      : {}),
   }));
 }
 
