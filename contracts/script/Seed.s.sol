@@ -31,10 +31,14 @@ contract SeedScript is Script {
     uint256 internal constant BORROWER_B_PK = 0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a;
     uint256 internal constant BORROWER_C_PK = 0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba;
     uint256 internal constant BORROWER_D_PK = 0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e;
+    uint256 internal constant BORROWER_E_PK = 0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97;
 
     uint24 internal constant FEE = 500;
     uint256 internal constant COLLATERAL = 10e18; // each WETH borrower posts 10 WETH
-    uint256 internal constant LINK_COLLATERAL = 2_000e18; // the LINK borrower posts 2000 LINK
+    uint256 internal constant LINK_COLLATERAL = 2000e18; // the LINK borrower posts 2000 LINK
+    uint256 internal constant BASKET_WETH = 10e18; // the basket borrower posts 10 WETH (primary)
+    uint256 internal constant BASKET_LINK = 1000e18; // ...and adds 1000 LINK as a second collateral
+    uint256 internal constant BASKET_BORROW = 20_000e6; // drawn against the combined basket value
     uint256 internal constant LP_DEPOSIT = 500_000e6;
     uint256 internal constant CRASH_PRICE = 1_500_000_000; // 1500 USDC/WETH (25% drop) -> cascade
     uint256 internal constant CRASH_LINK_PRICE = 5_000_000; // 5 USDC/LINK -> LINK account liquidatable
@@ -49,6 +53,7 @@ contract SeedScript is Script {
         address link;
         address linkCreditManager;
         address linkSwapAdapter;
+        address basketCreditManager;
     }
 
     /// @notice Seeds pool liquidity and three leveraged accounts across the health bands.
@@ -70,14 +75,20 @@ contract SeedScript is Script {
         address linkAccount =
             _openLevered(a, a.linkCreditManager, a.link, a.linkSwapAdapter, BORROWER_D_PK, LINK_COLLATERAL, 30_000e6);
 
+        // Basket market: one account holding two collaterals (WETH primary + LINK), drawing against
+        // the combined value. Proves portfolio-margin accounting on the live book.
+        address basketAccount = _seedBasketAccount(a);
+
         CreditManager cm = CreditManager(a.creditManager);
         CreditManager linkCm = CreditManager(a.linkCreditManager);
+        CreditManager basketCm = CreditManager(a.basketCreditManager);
         console2.log("Seeded Meridian book:");
         console2.log("  pool liquidity (USDC) ", Pool(a.pool).totalAssets());
         console2.log("  healthy     account   ", healthy, cm.calcHealthFactor(healthy));
         console2.log("  warning     account   ", warning, cm.calcHealthFactor(warning));
         console2.log("  margin-call account   ", marginCall, cm.calcHealthFactor(marginCall));
         console2.log("  LINK        account   ", linkAccount, linkCm.calcHealthFactor(linkAccount));
+        console2.log("  basket      account   ", basketAccount, basketCm.calcHealthFactor(basketAccount));
     }
 
     /// @notice Crashes the WETH price below the floor so the levered accounts become liquidatable.
@@ -123,6 +134,24 @@ contract SeedScript is Script {
         // every market it might liquidate in (not just the primary one).
         IERC20(a.usdc).approve(a.creditManager, type(uint256).max);
         IERC20(a.usdc).approve(a.linkCreditManager, type(uint256).max);
+        IERC20(a.usdc).approve(a.basketCreditManager, type(uint256).max);
+        vm.stopBroadcast();
+    }
+
+    /// @dev Opens an account in the basket market and posts two collaterals: WETH (the primary, via
+    ///      openCreditAccount) and LINK (added directly, no swap), then draws USDC against the sum.
+    function _seedBasketAccount(Addrs memory a) internal returns (address account) {
+        address borrower = vm.addr(BORROWER_E_PK);
+        CreditManager cm = CreditManager(a.basketCreditManager);
+
+        vm.startBroadcast(BORROWER_E_PK);
+        MockERC20(a.weth).mint(borrower, BASKET_WETH);
+        MockERC20(a.link).mint(borrower, BASKET_LINK);
+        IERC20(a.weth).approve(a.basketCreditManager, type(uint256).max);
+        IERC20(a.link).approve(a.basketCreditManager, type(uint256).max);
+
+        account = cm.openCreditAccount(BASKET_WETH, BASKET_BORROW, borrower);
+        cm.addCollateral(account, a.link, BASKET_LINK);
         vm.stopBroadcast();
     }
 
@@ -168,7 +197,8 @@ contract SeedScript is Script {
             swapAdapter: vm.parseJsonAddress(json, ".swapAdapter"),
             link: vm.parseJsonAddress(json, ".markets[1].collateralToken"),
             linkCreditManager: vm.parseJsonAddress(json, ".markets[1].creditManager"),
-            linkSwapAdapter: vm.parseJsonAddress(json, ".markets[1].swapAdapter")
+            linkSwapAdapter: vm.parseJsonAddress(json, ".markets[1].swapAdapter"),
+            basketCreditManager: vm.parseJsonAddress(json, ".basketMarket.creditManager")
         });
     }
 }
