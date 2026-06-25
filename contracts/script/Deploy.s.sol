@@ -36,10 +36,11 @@ import {MockSwapRouter} from "../test/mocks/MockSwapRouter.sol";
 ///         self-contained on a vanilla anvil node; public networks supply real token and feed
 ///         addresses via config and are a follow-up.
 /// @dev The system is multi-market: one shared USDC pool, oracle, and risk configurator, with one
-///      credit market (CreditManager + CreditFacade + LiquidationModule + mock DEX) per collateral
-///      asset. WETH and LINK ship by default; adding another 18-decimal collateral is a config + one
-///      _deployMarket call. Collateral is assumed 18-decimal because CreditManager values it against
-///      WAD; an 8-decimal asset (e.g. WBTC) would need a decimals-aware valuation first.
+///      single-collateral credit market (CreditManager + CreditFacade + LiquidationModule + mock DEX)
+///      per asset, plus one basket market whose CreditManager accepts several collaterals at once.
+///      WETH and LINK ship as single-collateral markets; the basket market accepts both. The credit
+///      manager values each collateral by its own decimals, so a non-18-decimal asset is fine on-chain
+///      (the local mock DEX, however, still pays 18-decimal collateral for the lever path).
 /// @dev Run locally with: forge script script/Deploy.s.sol:DeployScript
 ///      Broadcast to anvil with: forge script script/Deploy.s.sol:DeployScript \
 ///        --rpc-url http://127.0.0.1:8545 --broadcast --private-key <anvil_key>
@@ -101,6 +102,12 @@ contract DeployScript is Script {
         address linkLiquidationModule;
         address linkSwapRouter;
         address linkSwapAdapter;
+        // Basket market: one credit manager accepting both WETH (primary) and LINK as collateral.
+        address basketCreditManager;
+        address basketCreditFacade;
+        address basketLiquidationModule;
+        address basketSwapRouter;
+        address basketSwapAdapter;
     }
 
     function run() external returns (Deployment memory deployment) {
@@ -186,6 +193,17 @@ contract DeployScript is Script {
         d.linkLiquidationModule = link.liquidationModule;
         d.linkSwapRouter = link.swapRouter;
         d.linkSwapAdapter = link.swapAdapter;
+
+        // Basket market: a WETH-primary credit manager that also accepts LINK, so one account can hold
+        // both. Its own mock DEX levers into WETH; the LINK market's adapter (whitelisted globally) can
+        // lever into LINK. LINK's price and haircut are already configured on the shared oracle/risk.
+        Market memory basket = _deployMarket(d, "BASKET", d.weth, deployer, config.wethPriceInUsdc);
+        CreditManager(basket.creditManager).addCollateralToken(d.link);
+        d.basketCreditManager = basket.creditManager;
+        d.basketCreditFacade = basket.creditFacade;
+        d.basketLiquidationModule = basket.liquidationModule;
+        d.basketSwapRouter = basket.swapRouter;
+        d.basketSwapAdapter = basket.swapAdapter;
     }
 
     /// @notice Reads a Chainlink feed, registers it on the oracle for `token`, and returns the live
@@ -314,6 +332,30 @@ contract DeployScript is Script {
         }
         marketsJson = string.concat(marketsJson, "]");
         vm.writeJson(marketsJson, path, ".markets");
+
+        // Basket market under its own key, additive to the single-collateral `markets` array so the
+        // services that only read `markets` are unaffected until they learn to read baskets.
+        string memory bk = "basketMarket";
+        vm.serializeAddress(bk, "creditManager", d.basketCreditManager);
+        vm.serializeAddress(bk, "creditFacade", d.basketCreditFacade);
+        vm.serializeAddress(bk, "liquidationModule", d.basketLiquidationModule);
+        vm.serializeAddress(bk, "swapRouter", d.basketSwapRouter);
+        vm.serializeAddress(bk, "primaryCollateral", d.weth);
+        string memory basketJson = vm.serializeAddress(bk, "swapAdapter", d.basketSwapAdapter);
+        vm.writeJson(basketJson, path, ".basketMarket");
+
+        // Inject the collateral set as real JSON objects (same reason the markets array is injected raw).
+        string memory collateralsJson = string.concat(
+            "[",
+            '{"symbol":"WETH","collateralToken":"',
+            vm.toString(d.weth),
+            '","decimals":18},',
+            '{"symbol":"LINK","collateralToken":"',
+            vm.toString(d.link),
+            '","decimals":18}',
+            "]"
+        );
+        vm.writeJson(collateralsJson, path, ".basketMarket.collaterals");
     }
 
     /// @dev Rebuilds the market list from the flat Deployment fields for serialisation and logging.

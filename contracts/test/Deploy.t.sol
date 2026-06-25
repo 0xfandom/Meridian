@@ -67,6 +67,26 @@ contract DeployScriptTest is Test {
         assertEq(MockPriceOracle(d.oracle).getPrice(d.link), 8_000_000);
     }
 
+    function test_BasketMarketDeployedAndWired() public view {
+        // A distinct credit market that accepts BOTH WETH (primary) and LINK as collateral.
+        assertTrue(d.basketCreditManager != address(0));
+        assertTrue(d.basketCreditManager != d.creditManager && d.basketCreditManager != d.linkCreditManager);
+        assertTrue(Pool(d.pool).isCreditManager(d.basketCreditManager));
+
+        CreditManager cm = CreditManager(d.basketCreditManager);
+        assertEq(cm.facade(), d.basketCreditFacade);
+        assertEq(cm.liquidationModule(), d.basketLiquidationModule);
+        assertEq(address(cm.guardian()), d.guardian);
+        assertEq(address(cm.whitelistRegistry()), d.whitelistRegistry);
+
+        // Both collaterals are registered; WETH is the primary, LINK was added.
+        assertEq(address(cm.collateralToken()), d.weth);
+        assertTrue(cm.isCollateral(d.weth));
+        assertTrue(cm.isCollateral(d.link));
+        address[] memory set = cm.collateralTokensList();
+        assertEq(set.length, 2);
+    }
+
     /// @notice The manifest round-trips: writing it and parsing it back yields the same addresses and
     ///         chain metadata the services need to start with no manual address entry.
     function test_ManifestRoundTrips() public {
@@ -89,6 +109,14 @@ contract DeployScriptTest is Test {
         assertEq(vm.parseJsonString(json, ".markets[1].symbol"), "LINK");
         assertEq(vm.parseJsonAddress(json, ".markets[1].creditManager"), d.linkCreditManager);
         assertEq(vm.parseJsonAddress(json, ".markets[1].collateralToken"), d.link);
+
+        // The basket market is carried under its own key with a collateral set of WETH + LINK.
+        assertEq(vm.parseJsonAddress(json, ".basketMarket.creditManager"), d.basketCreditManager);
+        assertEq(vm.parseJsonAddress(json, ".basketMarket.primaryCollateral"), d.weth);
+        assertEq(vm.parseJsonString(json, ".basketMarket.collaterals[0].symbol"), "WETH");
+        assertEq(vm.parseJsonAddress(json, ".basketMarket.collaterals[0].collateralToken"), d.weth);
+        assertEq(vm.parseJsonString(json, ".basketMarket.collaterals[1].symbol"), "LINK");
+        assertEq(vm.parseJsonAddress(json, ".basketMarket.collaterals[1].collateralToken"), d.link);
 
         vm.removeFile(path);
     }
