@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -36,9 +37,19 @@ contract CreditManager is Ownable, ReentrancyGuard, ILiquidationTarget {
 
     IPool public immutable pool;
     IERC20 public immutable underlying;
+    /// @notice The primary collateral, fixed at deployment. It seeds the collateral set and anchors
+    ///         the threshold applied to drawn underlying held in an account.
     IERC20 public immutable collateralToken;
     IInterestRateModel public immutable interestRateModel;
     address public immutable accountImplementation;
+
+    /// @notice The set of collateral assets this manager accepts. Always contains the primary
+    ///         `collateralToken`; governance may register additional 18-or-other-decimal assets so a
+    ///         single account can hold a basket valued as the sum of its haircut-adjusted parts.
+    address[] public collateralTokens;
+    mapping(address token => bool) public isCollateral;
+    /// @notice 10**decimals for each registered collateral, cached so health math need not re-read it.
+    mapping(address token => uint256) public collateralUnit;
 
     IPriceOracle public oracle;
     IRiskConfigurator public riskConfigurator;
@@ -79,6 +90,8 @@ contract CreditManager is Ownable, ReentrancyGuard, ILiquidationTarget {
     event WhitelistRegistrySet(address indexed whitelistRegistry);
     event LiquidationModuleSet(address indexed liquidationModule);
     event FacadeSet(address indexed facade);
+    event CollateralTokenAdded(address indexed token);
+    event CollateralTokenRemoved(address indexed token);
 
     error ZeroAddress();
     error NotAuthorized();
@@ -88,6 +101,9 @@ contract CreditManager is Ownable, ReentrancyGuard, ILiquidationTarget {
     error AccountNotEmpty();
     error Undercollateralized();
     error CallNotWhitelisted(address target, bytes4 selector);
+    error NotCollateral(address token);
+    error AlreadyCollateral(address token);
+    error CannotRemovePrimary();
 
     /// @dev Reverts when a guardian is set and the protocol is paused. Debt repayment, collateral
     ///      top-ups, and account closure are intentionally left ungated so positions can always be
@@ -121,6 +137,8 @@ contract CreditManager is Ownable, ReentrancyGuard, ILiquidationTarget {
         riskConfigurator = riskConfigurator_;
         accountImplementation = accountImplementation_;
         lastIndexUpdate = block.timestamp;
+
+        _registerCollateral(address(collateralToken_));
     }
 
     // --------------------------------------------------------------------- //
@@ -164,6 +182,47 @@ contract CreditManager is Ownable, ReentrancyGuard, ILiquidationTarget {
         if (facade_ == address(0)) revert ZeroAddress();
         facade = facade_;
         emit FacadeSet(facade_);
+    }
+
+    /// @notice Registers an additional collateral asset. Its oracle price and haircut must already be
+    ///         configured, or health math will read a zero price/threshold for it. Decimals are read
+    ///         once and cached. Governance owns this; it widens what a single account may post.
+    function addCollateralToken(address token) external onlyOwner {
+        if (token == address(0)) revert ZeroAddress();
+        if (token == address(underlying)) revert NotCollateral(token);
+        if (isCollateral[token]) revert AlreadyCollateral(token);
+        _registerCollateral(token);
+        emit CollateralTokenAdded(token);
+    }
+
+    /// @notice De-registers a non-primary collateral. Any balance an account already holds stops
+    ///         counting toward its health, so governance must account for open positions first.
+    function removeCollateralToken(address token) external onlyOwner {
+        if (token == address(collateralToken)) revert CannotRemovePrimary();
+        if (!isCollateral[token]) revert NotCollateral(token);
+
+        isCollateral[token] = false;
+        delete collateralUnit[token];
+        uint256 len = collateralTokens.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (collateralTokens[i] == token) {
+                collateralTokens[i] = collateralTokens[len - 1];
+                collateralTokens.pop();
+                break;
+            }
+        }
+        emit CollateralTokenRemoved(token);
+    }
+
+    /// @notice The full collateral set, for off-chain indexing and UIs.
+    function collateralTokensList() external view returns (address[] memory) {
+        return collateralTokens;
+    }
+
+    function _registerCollateral(address token) internal {
+        isCollateral[token] = true;
+        collateralTokens.push(token);
+        collateralUnit[token] = 10 ** IERC20Metadata(token).decimals();
     }
 
     // --------------------------------------------------------------------- //
@@ -220,12 +279,11 @@ contract CreditManager is Ownable, ReentrancyGuard, ILiquidationTarget {
         a.facePrincipal = 0;
         a.scaledDebt = 0;
 
-        // Return remaining underlying and all collateral to the owner.
+        // Return remaining underlying and every collateral in the basket to the owner.
         address owner_ = a.owner;
         uint256 leftover = underlying.balanceOf(account);
         if (leftover > 0) MarginAccount(account).transferToken(address(underlying), owner_, leftover);
-        uint256 collateral = collateralToken.balanceOf(account);
-        if (collateral > 0) MarginAccount(account).transferToken(address(collateralToken), owner_, collateral);
+        _sweepCollateral(account, owner_);
 
         a.open = false;
         emit CloseAccount(account, owner_);
@@ -271,35 +329,70 @@ contract CreditManager is Ownable, ReentrancyGuard, ILiquidationTarget {
 
         address owner_ = a.owner;
 
-        uint256 collateral = collateralToken.balanceOf(account);
-        if (collateral > 0) {
-            MarginAccount(account).transferToken(address(collateralToken), liquidator, collateral);
-        }
+        // Seize every collateral in the basket; report the primary's amount on the event.
+        uint256 primarySeized = collateralToken.balanceOf(account);
+        _sweepCollateral(account, liquidator);
 
         uint256 leftover = underlying.balanceOf(account);
         if (leftover > 0) {
             MarginAccount(account).transferToken(address(underlying), owner_, leftover);
         }
 
-        emit Liquidate(account, liquidator, debt, collateral);
+        emit Liquidate(account, liquidator, debt, primarySeized);
     }
 
     // --------------------------------------------------------------------- //
     //                          Collateral and debt                          //
     // --------------------------------------------------------------------- //
 
+    /// @notice Tops up the account's primary collateral.
     function addCollateral(address account, uint256 amount) external nonReentrant {
+        _addCollateral(account, address(collateralToken), amount);
+    }
+
+    /// @notice Tops up any registered collateral, letting an account hold a basket.
+    function addCollateral(address account, address token, uint256 amount) external nonReentrant {
+        if (!isCollateral[token]) revert NotCollateral(token);
+        _addCollateral(account, token, amount);
+    }
+
+    /// @notice Withdraws the account's primary collateral, re-checking health after.
+    function withdrawCollateral(address account, uint256 amount, address to) external nonReentrant whenNotPaused {
+        _withdrawCollateral(account, address(collateralToken), amount, to);
+    }
+
+    /// @notice Withdraws any registered collateral, re-checking health after.
+    function withdrawCollateral(address account, address token, uint256 amount, address to)
+        external
+        nonReentrant
+        whenNotPaused
+    {
+        if (!isCollateral[token]) revert NotCollateral(token);
+        _withdrawCollateral(account, token, amount, to);
+    }
+
+    function _addCollateral(address account, address token, uint256 amount) internal {
         _authorized(account);
-        collateralToken.safeTransferFrom(msg.sender, account, amount);
+        IERC20(token).safeTransferFrom(msg.sender, account, amount);
         emit AddCollateral(account, amount);
     }
 
-    function withdrawCollateral(address account, uint256 amount, address to) external nonReentrant whenNotPaused {
+    function _withdrawCollateral(address account, address token, uint256 amount, address to) internal {
         _authorized(account);
         _accrueIndex();
-        MarginAccount(account).transferToken(address(collateralToken), to, amount);
+        MarginAccount(account).transferToken(token, to, amount);
         _requireHealthy(account);
         emit WithdrawCollateral(account, to, amount);
+    }
+
+    /// @dev Transfers every registered collateral the account holds to `to`. Used by close (to the
+    ///      owner) and liquidation (to the keeper); identical to a single transfer for a lone primary.
+    function _sweepCollateral(address account, address to) internal {
+        address[] memory tokens = collateralTokens;
+        for (uint256 i = 0; i < tokens.length; i++) {
+            uint256 balance = IERC20(tokens[i]).balanceOf(account);
+            if (balance > 0) MarginAccount(account).transferToken(tokens[i], to, balance);
+        }
     }
 
     function increaseDebt(address account, uint256 amount) external nonReentrant whenNotPaused {
@@ -367,24 +460,40 @@ contract CreditManager is Ownable, ReentrancyGuard, ILiquidationTarget {
         return Math.mulDiv(accounts[account].scaledDebt, _currentIndex(), RAY);
     }
 
-    /// @notice Liquidation loan-to-value for the collateral, in basis points, sourced from the
+    /// @notice Liquidation loan-to-value for the primary collateral, in basis points. Also the
+    ///         threshold applied to drawn underlying held in an account (see calcHealthFactor).
+    function liquidationThresholdBps() public view returns (uint256) {
+        return liquidationThresholdBps(address(collateralToken));
+    }
+
+    /// @notice Liquidation loan-to-value for a specific collateral, in basis points, sourced from the
     ///         risk configurator: the haircut's complement (BPS - haircut). Governance owns the
     ///         haircut, so the threshold can be tuned per collateral without redeploying.
-    function liquidationThresholdBps() public view returns (uint256) {
-        return BPS - riskConfigurator.haircutBps(address(collateralToken));
+    function liquidationThresholdBps(address token) public view returns (uint256) {
+        return BPS - riskConfigurator.haircutBps(token);
     }
 
     /// @notice Health factor in WAD; 1e18 is the liquidation boundary, above is solvent.
+    /// @dev Sums each collateral's value (balance x price / its unit) weighted by that collateral's
+    ///      own threshold, plus drawn underlying weighted by the primary threshold, over live debt.
+    ///      A single-collateral account (the set holds only the primary) reduces exactly to the
+    ///      legacy (collateral + underlying) x threshold / debt.
     function calcHealthFactor(address account) public view override returns (uint256) {
         uint256 debt = calcDebt(account);
         if (debt == 0) return type(uint256).max;
 
-        uint256 collateralBalance = collateralToken.balanceOf(account);
-        uint256 underlyingBalance = underlying.balanceOf(account);
-        uint256 collateralValue = Math.mulDiv(collateralBalance, oracle.getPrice(address(collateralToken)), WAD);
-        uint256 assetsValue = collateralValue + underlyingBalance;
+        // Drawn underlying held in the account, weighted by the primary collateral's threshold.
+        uint256 adjusted = Math.mulDiv(underlying.balanceOf(account), liquidationThresholdBps(), BPS);
 
-        uint256 adjusted = Math.mulDiv(assetsValue, liquidationThresholdBps(), BPS);
+        address[] memory tokens = collateralTokens;
+        for (uint256 i = 0; i < tokens.length; i++) {
+            address token = tokens[i];
+            uint256 balance = IERC20(token).balanceOf(account);
+            if (balance == 0) continue;
+            uint256 value = Math.mulDiv(balance, oracle.getPrice(token), collateralUnit[token]);
+            adjusted += Math.mulDiv(value, liquidationThresholdBps(token), BPS);
+        }
+
         return Math.mulDiv(adjusted, WAD, debt);
     }
 
