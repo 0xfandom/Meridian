@@ -15,6 +15,14 @@ export interface PoolView {
   lastBlock: string;
 }
 
+// One collateral held by a basket account, with its live balance (GET /accounts).
+export interface AccountCollateralView {
+  token: string;
+  symbol: string;
+  decimals: number;
+  amount: string; // balance in the token's own decimals
+}
+
 export interface AccountView {
   account: string;
   owner: string;
@@ -27,6 +35,9 @@ export interface AccountView {
   symbol?: string;
   collateralToken?: string;
   creditManager?: string;
+  // For a basket-market account: the live per-collateral balances. Single-collateral accounts use
+  // collateralDeposited; basket accounts read this.
+  collaterals?: AccountCollateralView[];
 }
 
 // A recorded liquidation (GET /liquidations), bigints as decimal strings.
@@ -39,7 +50,16 @@ export interface LiquidationView {
   txHash: string;
 }
 
-// One credit market with its live collateral mark (GET /markets).
+// One collateral of a basket market, with its live mark (GET /markets).
+export interface MarketCollateralView {
+  symbol: string;
+  collateralToken: string;
+  decimals: number;
+  priceUsdc: string; // live oracle mark, 6 decimals
+}
+
+// One credit market with its live collateral mark (GET /markets). A basket market also lists
+// `collaterals`, each with its own mark.
 export interface MarketView {
   symbol: string;
   collateralToken: string;
@@ -49,6 +69,7 @@ export interface MarketView {
   swapAdapter: string;
   decimals: number;
   priceUsdc: string; // live oracle mark, 6 decimals
+  collaterals?: MarketCollateralView[];
 }
 
 // The contract addresses + chain metadata of the running deployment (GET /deployment).
