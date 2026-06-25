@@ -255,13 +255,40 @@ Back on **Borrow**, use the market selector to switch to **LINK**. Open a second
 **200 LINK** and borrow USDC. **Observe:** a separate isolated account in the LINK market, drawing from
 the **same** USDC pool. Each collateral is its own isolated market; one shared pool.
 
-### 7. Verify everything from the API
+### 7. The basket market (portfolio margin)
+
+Beyond single-collateral markets, a **basket market** lets one account hold several collaterals at once
+and borrow against their combined value. The seed opens a basket account (10 WETH + 1000 LINK), so you
+can view it directly.
+
+1. **Import the basket borrower** into MetaMask (public test key):
+   `0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97` (address `0x23618e81…`). Select
+   it on the 31337 network. Its wallet holds only gas ETH — the basket assets are already inside its
+   margin account, so **no faucet needed**.
+2. Open **Borrow**. The position is one account backed by two collaterals.
+
+| What you'll see | Value | Meaning |
+| --- | --- | --- |
+| Collateral | **Basket** | Holds more than one collateral, not a single asset |
+| Collateral assets | **10.0000 WETH · 1000.0000 LINK** | Each asset with its own live amount and value |
+| Debt | **$20,000** | Drawn against the combined basket value |
+| Health factor | **~2.12** | Sum of each collateral's haircut-adjusted value over debt |
+| Liquidation | **—** | A basket has no single price; the health factor is the gauge |
+
+This is the institutional **portfolio margin** model: the credit manager values each collateral by its
+own price, decimals, and haircut and sums them (v1). Correlation netting (long/short offset) is the next
+version. Opening/managing a basket from the browser is a follow-up — the view, indexer, and API are live.
+
+### 8. Verify everything from the API
 
 ```bash
 curl -s http://127.0.0.1:3001/pools        | jq   # pool totals + live prices
 curl -s http://127.0.0.1:3001/accounts     | jq   # every account: health, collateral, debt, liquidated
-curl -s http://127.0.0.1:3001/markets      | jq   # WETH and LINK markets + marks
+curl -s http://127.0.0.1:3001/markets      | jq   # WETH, LINK, and the BASKET market (with collaterals)
 curl -s http://127.0.0.1:3001/liquidations | jq   # every recorded liquidation
+
+# the basket account's per-collateral balances:
+curl -s http://127.0.0.1:3001/accounts | jq '.[] | select(.symbol=="BASKET")'
 ```
 
 To run it all again, `Ctrl-C` the stack and start from Quick start step 2 — a fresh `dev-up` gives a
@@ -312,6 +339,10 @@ The protocol and the off-chain services are built and run end to end on a local 
   (WETH and LINK ship by default), all sharing one USDC lending pool. The whole spine is
   market-aware: the indexer tags accounts by market, the API exposes them at `/markets`, and the
   keeper routes each account's health read and liquidation to its own credit manager.
+- Multi-collateral basket (v1) — a basket market lets one account hold several collaterals at once
+  (WETH + LINK) and borrow against their combined value; the credit manager values each by its own
+  price, decimals, and haircut and sums them. Seeded, indexed, served by the API, and rendered in the
+  position view. Correlation netting (v2 portfolio margin) and a browser open/manage flow are next.
 - Frontend — wallet connect, faucet, lender deposit/withdraw, a market selector, and the full
   borrower flow (open/borrow/repay/add/withdraw/lever/close) signing straight to chain.
 - Local stack — one command boots a clean local chain with a seeded book and a price-crash
@@ -331,10 +362,10 @@ logic — the contracts are written interface-first for exactly these steps.
 - **Real swaps against live DEX liquidity** — point the Uniswap/Curve adapters at real routers/pools
   on a fork or mainnet (the adapters already take the venue address). Also removes the close-out
   interest dust seen with the one-way mock router.
-- **Multi-collateral baskets** — a single account holding several collateral types at once. Today
-  each collateral is its own isolated market; a true cross-collateral basket needs the credit manager
-  to value a mix of assets. Adding another isolated single-collateral market is just config plus one
-  `_deployMarket` call.
+- **Portfolio margin (v2 netting)** — basket accounts ship today as a haircut-adjusted **sum** of
+  their collaterals (v1). The next step is correlation netting: letting opposing positions offset so a
+  hedged book needs less margin, the way an institutional prime broker prices portfolio risk. The
+  per-asset valuation and summing path are already in place.
 - **Borrower onboarding** — KYC / permissioning layer and credit terms for institutional borrowers.
 - **Admin / risk console** — a UI over the on-chain risk and whitelist setters that already exist.
 - **External audit** — the gate for any real-money deployment.
