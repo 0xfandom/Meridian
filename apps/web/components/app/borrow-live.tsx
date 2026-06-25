@@ -477,7 +477,7 @@ function PositionCard({ account }: { account: BorrowerAccount }) {
   const metrics = [
     {
       k: "Collateral",
-      v: `${account.collateral.toFixed(4)} ${account.symbol}`,
+      v: account.collaterals ? "Basket" : `${account.collateral.toFixed(4)} ${account.symbol}`,
       sub: usd(account.collateralValue),
     },
     { k: "Debt", v: usd(account.debt), sub: "USDC drawn" },
@@ -515,6 +515,26 @@ function PositionCard({ account }: { account: BorrowerAccount }) {
               </div>
             ))}
           </div>
+          {/* basket collateral breakdown */}
+          {account.collaterals && (
+            <div className="overflow-hidden rounded-xl border border-hair/70">
+              <div className="flex items-center justify-between bg-off/50 px-4 py-2 font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-f">
+                <span>Collateral assets</span>
+                <span>Value</span>
+              </div>
+              {account.collaterals.map((c) => (
+                <div
+                  key={c.token}
+                  className="flex items-center justify-between border-t border-hair/70 px-4 py-2.5"
+                >
+                  <div className="font-sans text-[13.5px] font-semibold text-ink">
+                    {c.amount.toFixed(4)} <span className="text-ink-m">{c.symbol}</span>
+                  </div>
+                  <div className="font-mono text-[12.5px] text-ink-m">{usd(c.value)}</div>
+                </div>
+              ))}
+            </div>
+          )}
           {/* manage actions */}
           <div className="flex flex-wrap gap-2">
             {MANAGE_BUTTONS.map(({ kind, label, Icon }) => (
@@ -560,7 +580,7 @@ function PositionCard({ account }: { account: BorrowerAccount }) {
                 Liquidation
               </div>
               <div className="mt-1 font-mono text-[15px] font-semibold text-ink">
-                {account.debt > 0 ? usd(account.liquidationPrice) : "—"}
+                {account.collaterals || account.debt === 0 ? "—" : usd(account.liquidationPrice)}
               </div>
             </div>
           </div>

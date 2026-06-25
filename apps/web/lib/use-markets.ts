@@ -25,3 +25,15 @@ export function findMarket(
   const target = collateralToken.toLowerCase();
   return markets.find((m) => m.collateralToken.toLowerCase() === target);
 }
+
+/// Resolves a market by its credit manager (case-insensitive). Preferred over findMarket for an
+/// account: a basket market shares its primary collateral token with a single-collateral market, so
+/// the credit manager is the unambiguous key.
+export function findMarketByManager(
+  markets: MarketView[] | undefined,
+  creditManager: string | undefined,
+): MarketView | undefined {
+  if (!markets || !creditManager) return undefined;
+  const target = creditManager.toLowerCase();
+  return markets.find((m) => m.creditManager.toLowerCase() === target);
+}
