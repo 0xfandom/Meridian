@@ -1,13 +1,22 @@
 import { readFileSync } from "node:fs";
 import type { Address } from "./domain/events.js";
 
+/// One collateral in a basket market: the token plus the decimals/symbol needed to value it.
+export interface ManifestCollateral {
+  symbol: string;
+  collateralToken: Address;
+  decimals: number;
+}
+
 /// One credit market: a collateral asset and the contracts the indexer watches for it. The pool and
-/// oracle are shared across markets and live on the manifest root.
+/// oracle are shared across markets and live on the manifest root. A basket market sets `collaterals`
+/// to its full set; single-collateral markets leave it undefined and use `collateralToken` alone.
 export interface ManifestMarket {
   symbol: string;
   collateralToken: Address;
   creditManager: Address;
   liquidationModule: Address;
+  collaterals?: ManifestCollateral[];
 }
 
 /// The subset of the deployment manifest the indexer needs. The deploy script writes the full file
@@ -49,29 +58,65 @@ export function loadManifest(path: string): DeploymentManifest {
 }
 
 /// Reads the `markets` array, or synthesises a single primary market from the flat fields for
-/// manifests written before multi-market support.
+/// manifests written before multi-market support. Appends the basket market (if present) so the
+/// indexer watches it like any other; it carries its collateral set for per-asset valuation.
 function parseMarkets(raw: Record<string, unknown>, path: string): ManifestMarket[] {
   const arr = raw.markets;
-  if (Array.isArray(arr) && arr.length > 0) {
-    return arr.map((entry, i) => {
-      const m = entry as Record<string, unknown>;
-      const where = `${path} markets[${i}]`;
-      return {
-        symbol: requireString(m, "symbol", where),
-        collateralToken: requireManifestAddress(m, "collateralToken", where),
-        creditManager: requireManifestAddress(m, "creditManager", where),
-        liquidationModule: requireManifestAddress(m, "liquidationModule", where),
-      };
-    });
+  const single: ManifestMarket[] =
+    Array.isArray(arr) && arr.length > 0
+      ? arr.map((entry, i) => {
+          const m = entry as Record<string, unknown>;
+          const where = `${path} markets[${i}]`;
+          return {
+            symbol: requireString(m, "symbol", where),
+            collateralToken: requireManifestAddress(m, "collateralToken", where),
+            creditManager: requireManifestAddress(m, "creditManager", where),
+            liquidationModule: requireManifestAddress(m, "liquidationModule", where),
+          };
+        })
+      : [
+          {
+            symbol: "primary",
+            collateralToken: requireManifestAddress(raw, "weth", path),
+            creditManager: requireManifestAddress(raw, "creditManager", path),
+            liquidationModule: requireManifestAddress(raw, "liquidationModule", path),
+          },
+        ];
+
+  const basket = parseBasketMarket(raw, path);
+  return basket ? [...single, basket] : single;
+}
+
+/// Reads the optional `basketMarket` key into a market whose `collaterals` set lists every asset the
+/// account may post. Absent on manifests written before basket support, so returns null then.
+function parseBasketMarket(raw: Record<string, unknown>, path: string): ManifestMarket | null {
+  const bm = raw.basketMarket;
+  if (bm === undefined || bm === null) return null;
+  if (typeof bm !== "object") throw new Error(`manifest ${path}: basketMarket must be an object`);
+  const m = bm as Record<string, unknown>;
+  const where = `${path} basketMarket`;
+
+  const collateralsRaw = m.collaterals;
+  if (!Array.isArray(collateralsRaw) || collateralsRaw.length === 0) {
+    throw new Error(`${where}: collaterals must be a non-empty array`);
   }
-  return [
-    {
-      symbol: "primary",
-      collateralToken: requireManifestAddress(raw, "weth", path),
-      creditManager: requireManifestAddress(raw, "creditManager", path),
-      liquidationModule: requireManifestAddress(raw, "liquidationModule", path),
-    },
-  ];
+  const collaterals: ManifestCollateral[] = collateralsRaw.map((entry, i) => {
+    const c = entry as Record<string, unknown>;
+    const cw = `${where} collaterals[${i}]`;
+    return {
+      symbol: requireString(c, "symbol", cw),
+      collateralToken: requireManifestAddress(c, "collateralToken", cw),
+      decimals: requireNumber(c, "decimals", cw),
+    };
+  });
+
+  return {
+    symbol: "BASKET",
+    collateralToken: requireManifestAddress(m, "primaryCollateral", where),
+    creditManager: requireManifestAddress(m, "creditManager", where),
+    liquidationModule: requireManifestAddress(m, "liquidationModule", where),
+    collaterals,
+  };
 }
 
 function requireString(raw: Record<string, unknown>, key: string, path: string): string {

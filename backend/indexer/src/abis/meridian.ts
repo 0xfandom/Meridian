@@ -28,6 +28,8 @@ export const liquidationModuleAbi = parseAbi([
 /// event log alone cannot provide: the collateral mark and each account's health factor.
 export const priceOracleAbi = parseAbi(["function getPrice(address token) view returns (uint256)"]);
 
+export const erc20Abi = parseAbi(["function balanceOf(address account) view returns (uint256)"]);
+
 export const creditManagerReadAbi = parseAbi([
   "function calcHealthFactor(address account) view returns (uint256)",
 ]);
