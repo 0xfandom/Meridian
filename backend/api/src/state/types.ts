@@ -21,6 +21,17 @@ export interface AccountState {
   creditManager?: Address;
   collateralToken?: Address;
   symbol?: string;
+  // For a basket-market account: the live per-collateral balances from the indexer. Single-collateral
+  // accounts use collateralDeposited above; basket consumers read this.
+  collaterals?: AccountCollateral[];
+}
+
+/// One collateral asset held by an account, with the live balance the indexer read from chain.
+export interface AccountCollateral {
+  token: Address;
+  symbol: string;
+  decimals: number;
+  amount: bigint;
 }
 
 export interface LiquidationRecord {
