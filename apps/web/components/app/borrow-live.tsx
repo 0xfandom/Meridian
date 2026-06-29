@@ -106,7 +106,10 @@ export function BorrowLive() {
           <LoadingCard />
         ) : liquidated ? (
           <div className="flex flex-col gap-5">
-            <LiquidationReportCard report={report} onStartNew={() => dismissReport(report.txHash)} />
+            <LiquidationReportCard
+              report={report}
+              onStartNew={() => dismissReport(report.txHash)}
+            />
             <LiquidationTheory />
             <BrandBand />
           </div>
@@ -297,14 +300,16 @@ function LiquidationTheory() {
         How a liquidation works<span className="text-red">.</span>
       </h2>
       <p className="mt-2 max-w-[640px] text-[13.5px] leading-relaxed text-ink-m">
-        Liquidation is what lets Meridian offer capital-efficient, undercollateralized leverage while
-        keeping every lender fully covered. Here is the exact lifecycle your account just went
+        Liquidation is what lets Meridian offer capital-efficient, undercollateralized leverage
+        while keeping every lender fully covered. Here is the exact lifecycle your account just went
         through — settled on-chain, in seconds.
       </p>
       <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {steps.map((s) => (
           <div key={s.n} className="rounded-xl border border-hair/70 bg-off/40 p-4">
-            <div className="font-sans text-[22px] font-extrabold tracking-tight text-red">{s.n}</div>
+            <div className="font-sans text-[22px] font-extrabold tracking-tight text-red">
+              {s.n}
+            </div>
             <div className="mt-1 font-sans text-[14.5px] font-bold tracking-tight text-ink">
               {s.t}
             </div>
@@ -343,7 +348,9 @@ function BorrowHowItWorks() {
 
   return (
     <div className="rounded-2xl border border-hair/70 bg-white p-6 lg:p-8 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
-      <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-f">How it works</div>
+      <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-f">
+        How it works
+      </div>
       <h2
         className="mt-1.5 font-sans font-extrabold leading-[1.02] tracking-tight text-ink"
         style={{ fontSize: "clamp(1.5rem, 3vw, 2.3rem)" }}
@@ -358,7 +365,9 @@ function BorrowHowItWorks() {
       <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {steps.map((s) => (
           <div key={s.n} className="rounded-xl border border-hair/70 bg-off/40 p-4">
-            <div className="font-sans text-[22px] font-extrabold tracking-tight text-red">{s.n}</div>
+            <div className="font-sans text-[22px] font-extrabold tracking-tight text-red">
+              {s.n}
+            </div>
             <div className="mt-1 font-sans text-[14.5px] font-bold tracking-tight text-ink">
               {s.t}
             </div>
@@ -397,7 +406,9 @@ function ManagePosition() {
 
   return (
     <div className="rounded-2xl border border-hair/70 bg-white p-6 lg:p-8 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
-      <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-f">Managing the position</div>
+      <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-f">
+        Managing the position
+      </div>
       <h2
         className="mt-1.5 font-sans font-extrabold leading-[1.02] tracking-tight text-ink"
         style={{ fontSize: "clamp(1.5rem, 3vw, 2.3rem)" }}
@@ -412,7 +423,9 @@ function ManagePosition() {
       <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {steps.map((s) => (
           <div key={s.n} className="rounded-xl border border-hair/70 bg-off/40 p-4">
-            <div className="font-sans text-[22px] font-extrabold tracking-tight text-red">{s.n}</div>
+            <div className="font-sans text-[22px] font-extrabold tracking-tight text-red">
+              {s.n}
+            </div>
             <div className="mt-1 font-sans text-[14.5px] font-bold tracking-tight text-ink">
               {s.t}
             </div>
@@ -728,17 +741,14 @@ function ManageModal({
         {isClose ? (
           <p className="rounded-2xl border border-hair bg-off p-4 text-[13px] leading-relaxed text-ink-m">
             Repays the debt — principal plus accrued interest — from the {usd(account.usdcHeld)} the
-            account holds, then returns the remaining balance and{" "}
-            {account.collateral.toFixed(4)} {symbol} collateral to your wallet. The account must hold
-            enough to cover the interest.
+            account holds, then returns the remaining balance and {account.collateral.toFixed(4)}{" "}
+            {symbol} collateral to your wallet. The account must hold enough to cover the interest.
           </p>
         ) : (
           <div className="rounded-2xl border border-hair bg-off p-4">
             <div className="flex items-center justify-between font-mono text-[10.5px] uppercase tracking-[0.16em] text-ink-m">
               <span>Amount ({c.unit})</span>
-              {c.max !== undefined && (
-                <span>Max: {isToken ? c.max.toFixed(4) : usd(c.max)}</span>
-              )}
+              {c.max !== undefined && <span>Max: {isToken ? c.max.toFixed(4) : usd(c.max)}</span>}
             </div>
             <div className="mt-2 flex items-center gap-2">
               <input
@@ -880,9 +890,7 @@ function OpenAccountCard() {
                 </button>
               );
             })}
-            {!markets && (
-              <span className="font-mono text-[12px] text-ink-f">Loading markets…</span>
-            )}
+            {!markets && <span className="font-mono text-[12px] text-ink-f">Loading markets…</span>}
           </div>
         </div>
 
@@ -934,7 +942,12 @@ function OpenAccountCard() {
         <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-ink-f">
           <TrendingUp size={14} className="text-red" /> Estimate
         </div>
-        <Estimate collateral={collateral} borrow={borrow} symbol={symbol || "collateral"} price={price} />
+        <Estimate
+          collateral={collateral}
+          borrow={borrow}
+          symbol={symbol || "collateral"}
+          price={price}
+        />
       </div>
     </div>
   );

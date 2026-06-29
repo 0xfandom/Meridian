@@ -130,7 +130,14 @@ describe("loadDeployment", () => {
     expect(loadDeployment(writeManifest({ pool: POOL }))?.markets).toEqual([]);
     const path = writeManifest({
       pool: POOL,
-      markets: [{ symbol: "BAD", collateralToken: "not-an-address", creditManager: POOL, liquidationModule: POOL }],
+      markets: [
+        {
+          symbol: "BAD",
+          collateralToken: "not-an-address",
+          creditManager: POOL,
+          liquidationModule: POOL,
+        },
+      ],
     });
     expect(loadDeployment(path)?.markets).toEqual([]);
   });
