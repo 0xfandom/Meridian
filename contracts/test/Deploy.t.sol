@@ -10,6 +10,9 @@ import {AdapterRegistry} from "../src/AdapterRegistry.sol";
 import {WhitelistRegistry} from "../src/WhitelistRegistry.sol";
 import {CurveAdapter} from "../src/adapters/CurveAdapter.sol";
 import {LstAdapter} from "../src/adapters/LstAdapter.sol";
+import {Guardian} from "../src/governance/Guardian.sol";
+import {MeridianTimelock} from "../src/governance/MeridianTimelock.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
 
 /// @notice Runs the deployment script and asserts every wiring step was applied, so deployment
@@ -135,6 +138,40 @@ contract DeployScriptTest is Test {
         assertTrue(whitelist.allowedTarget(d.wsteth));
     }
 
+    function test_TimelockDeployed() public view {
+        assertTrue(d.timelock != address(0));
+        // Local timelock has no delay, so governance handoff does not freeze iteration.
+        assertEq(MeridianTimelock(payable(d.timelock)).getMinDelay(), 0);
+    }
+
+    function test_DefaultDeployKeepsDeployerAsOwner() public view {
+        // Without the handoff flag, ownership stays with the deployer, not the timelock.
+        assertTrue(Ownable(d.pool).owner() != d.timelock);
+        assertTrue(Ownable(d.creditManager).owner() != d.timelock);
+        assertTrue(Ownable(d.whitelistRegistry).owner() != d.timelock);
+    }
+
+    function test_HandoffMigratesEveryOwnerToTimelock() public {
+        DeployScript.Deployment memory h = new DeployScript().deployLocalWithHandoff();
+
+        assertEq(Ownable(h.pool).owner(), h.timelock);
+        assertEq(Ownable(h.riskConfigurator).owner(), h.timelock);
+        assertEq(Ownable(h.guardian).owner(), h.timelock);
+        assertEq(Ownable(h.whitelistRegistry).owner(), h.timelock);
+        assertEq(Ownable(h.adapterRegistry).owner(), h.timelock);
+        assertEq(Ownable(h.accessController).owner(), h.timelock);
+
+        assertEq(Ownable(h.creditManager).owner(), h.timelock);
+        assertEq(Ownable(h.liquidationModule).owner(), h.timelock);
+        assertEq(Ownable(h.linkCreditManager).owner(), h.timelock);
+        assertEq(Ownable(h.linkLiquidationModule).owner(), h.timelock);
+        assertEq(Ownable(h.basketCreditManager).owner(), h.timelock);
+        assertEq(Ownable(h.basketLiquidationModule).owner(), h.timelock);
+
+        // The guardian's fast pause key is untouched by the handoff; only its owner moved.
+        assertTrue(Guardian(h.guardian).guardian() != h.timelock);
+    }
+
     /// @notice The manifest round-trips: writing it and parsing it back yields the same addresses and
     ///         chain metadata the services need to start with no manual address entry.
     function test_ManifestRoundTrips() public {
@@ -170,6 +207,7 @@ contract DeployScriptTest is Test {
         assertEq(vm.parseJsonAddress(json, ".adapterRegistry"), d.adapterRegistry);
         assertEq(vm.parseJsonAddress(json, ".curveAdapter"), d.curveAdapter);
         assertEq(vm.parseJsonAddress(json, ".lstAdapter"), d.lstAdapter);
+        assertEq(vm.parseJsonAddress(json, ".timelock"), d.timelock);
 
         vm.removeFile(path);
     }

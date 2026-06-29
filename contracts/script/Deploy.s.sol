@@ -20,6 +20,8 @@ import {UniswapV3Adapter} from "../src/adapters/UniswapV3Adapter.sol";
 import {CurveAdapter} from "../src/adapters/CurveAdapter.sol";
 import {LstAdapter} from "../src/adapters/LstAdapter.sol";
 import {Guardian} from "../src/governance/Guardian.sol";
+import {MeridianTimelock} from "../src/governance/MeridianTimelock.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {RiskParams} from "../src/libraries/RiskParams.sol";
 import {IGuardian} from "../src/interfaces/IGuardian.sol";
 import {IInterestRateModel} from "../src/interfaces/IInterestRateModel.sol";
@@ -54,6 +56,9 @@ import {MockWstETH} from "../test/mocks/MockWstETH.sol";
 contract DeployScript is Script {
     uint256 internal constant LOCAL_CHAIN_ID = 31_337;
     uint256 internal constant COLLATERAL_WAD = 1e18; // every collateral is 18-decimal (see contract note)
+    // Local timelock has no delay so handoff does not freeze dev iteration; a public network supplies a
+    // real delay via config (a follow-up, like the other live-network parameters).
+    uint256 internal constant LOCAL_TIMELOCK_DELAY = 0;
 
     struct Config {
         address keeper;
@@ -93,6 +98,7 @@ contract DeployScript is Script {
         address riskConfigurator;
         address accountImplementation;
         address guardian;
+        address timelock;
         address whitelistRegistry;
         address adapterRegistry;
         address accessController;
@@ -132,7 +138,7 @@ contract DeployScript is Script {
         address deployer = msg.sender;
 
         vm.startBroadcast();
-        deployment = _deploy(config, deployer);
+        deployment = _deploy(config, deployer, vm.envOr("HANDOFF_TO_TIMELOCK", false));
         vm.stopBroadcast();
 
         writeManifest(network, deployment, block.number);
@@ -140,12 +146,22 @@ contract DeployScript is Script {
     }
 
     /// @notice Broadcast-free local deployment for tests: the caller is both owner and deployer, so
-    ///         the owner-gated wiring setters execute against a consistent sender.
+    ///         the owner-gated wiring setters execute against a consistent sender. Ownership stays with
+    ///         the deployer (no timelock handoff), matching the default local dev flow.
     function deployLocal() external returns (Deployment memory) {
-        return _deploy(_readConfig("local"), address(this));
+        return _deploy(_readConfig("local"), address(this), false);
     }
 
-    function _deploy(Config memory config, address deployer) internal returns (Deployment memory d) {
+    /// @notice Same as deployLocal, but hands every admin role to the timelock as the final step, so a
+    ///         test can assert the governance migration without affecting the default flow.
+    function deployLocalWithHandoff() external returns (Deployment memory) {
+        return _deploy(_readConfig("local"), address(this), true);
+    }
+
+    function _deploy(Config memory config, address deployer, bool handoffToTimelock)
+        internal
+        returns (Deployment memory d)
+    {
         require(block.chainid == LOCAL_CHAIN_ID, "DeployScript: only the local profile is implemented");
 
         // --- Mock collateral assets (local only); both 18-decimal ---
@@ -158,7 +174,8 @@ contract DeployScript is Script {
         // ChainlinkPriceOracle and read each collateral from its live feed (ETH_USD_FEED,
         // LINK_USD_FEED). The mock routers' rates derive from the *PriceInUsdc config values, so we
         // pin those to the live prices here to keep valuation and the local swap venues consistent.
-        if (vm.envOr("USE_CHAINLINK", false)) {
+        bool useChainlink = vm.envOr("USE_CHAINLINK", false);
+        if (useChainlink) {
             ChainlinkPriceOracle oracle = new ChainlinkPriceOracle(deployer, 6);
             config.wethPriceInUsdc = _wireFeed(oracle, d.weth, vm.envAddress("ETH_USD_FEED"));
             config.linkPriceInUsdc = _wireFeed(oracle, d.link, vm.envAddress("LINK_USD_FEED"));
@@ -187,6 +204,7 @@ contract DeployScript is Script {
 
         // --- Safety and access (shared) ---
         d.guardian = address(new Guardian(deployer, deployer));
+        d.timelock = address(_deployTimelock(deployer));
         d.whitelistRegistry = address(new WhitelistRegistry(deployer));
         d.adapterRegistry = address(new AdapterRegistry(deployer));
         d.accessController = address(new AccessController(deployer));
@@ -225,6 +243,47 @@ contract DeployScript is Script {
         // --- Shared periphery adapters (Curve liquidity + LST wrap, registered + gated like swaps) ---
         (d.curveAdapter, d.curvePool, d.curveLp) = _deployCurve(d);
         (d.lstAdapter, d.steth, d.wsteth) = _deployLst(d);
+
+        // --- Governance handoff (opt-in) ---
+        // Every contract above is owned by the deployer so all wiring can run directly. When opted in,
+        // migrate ownership to the timelock as the final step. Default off keeps the deployer as owner,
+        // which the local dev flow and the Seed/Smoke scripts rely on.
+        if (handoffToTimelock) _handoffOwnership(d, useChainlink);
+    }
+
+    /// @notice Deploys the protocol timelock. The deployer is the sole proposer and executor locally so
+    ///         it can drive governance with no extra keys; a public network configures a Safe instead.
+    ///         The timelock self-administers (no standing admin), and its delay is zero locally so the
+    ///         ownership handoff does not freeze iteration.
+    function _deployTimelock(address deployer) internal returns (MeridianTimelock timelock) {
+        address[] memory proposers = new address[](1);
+        proposers[0] = deployer;
+        address[] memory executors = new address[](1);
+        executors[0] = deployer;
+        timelock = new MeridianTimelock(LOCAL_TIMELOCK_DELAY, proposers, executors, address(0));
+    }
+
+    /// @notice Transfers every privileged (Ownable) contract from the deployer to the timelock, so all
+    ///         parameter changes thereafter must pass through the timelock's queue. The guardian's fast
+    ///         pause key is left as-is; only its owner (which lifts the pause and rotates the key) moves
+    ///         to the timelock, preserving the asymmetric pause design.
+    function _handoffOwnership(Deployment memory d, bool useChainlink) internal {
+        Ownable(d.pool).transferOwnership(d.timelock);
+        Ownable(d.riskConfigurator).transferOwnership(d.timelock);
+        Ownable(d.guardian).transferOwnership(d.timelock);
+        Ownable(d.whitelistRegistry).transferOwnership(d.timelock);
+        Ownable(d.adapterRegistry).transferOwnership(d.timelock);
+        Ownable(d.accessController).transferOwnership(d.timelock);
+
+        Ownable(d.creditManager).transferOwnership(d.timelock);
+        Ownable(d.liquidationModule).transferOwnership(d.timelock);
+        Ownable(d.linkCreditManager).transferOwnership(d.timelock);
+        Ownable(d.linkLiquidationModule).transferOwnership(d.timelock);
+        Ownable(d.basketCreditManager).transferOwnership(d.timelock);
+        Ownable(d.basketLiquidationModule).transferOwnership(d.timelock);
+
+        // The mock oracle is not Ownable; only the real Chainlink oracle (fork mode) carries an owner.
+        if (useChainlink) Ownable(d.oracle).transferOwnership(d.timelock);
     }
 
     /// @notice Deploys the shared Curve adapter over a local mock two-coin (USDC/WETH) pool, whitelists
@@ -402,6 +461,7 @@ contract DeployScript is Script {
         vm.serializeAddress(obj, "creditManager", d.creditManager);
         vm.serializeAddress(obj, "creditFacade", d.creditFacade);
         vm.serializeAddress(obj, "guardian", d.guardian);
+        vm.serializeAddress(obj, "timelock", d.timelock);
         vm.serializeAddress(obj, "whitelistRegistry", d.whitelistRegistry);
         vm.serializeAddress(obj, "adapterRegistry", d.adapterRegistry);
         vm.serializeAddress(obj, "curveAdapter", d.curveAdapter);
@@ -517,6 +577,7 @@ contract DeployScript is Script {
         console2.log("  RiskConfigurator    ", d.riskConfigurator);
         console2.log("  MarginAccountImpl   ", d.accountImplementation);
         console2.log("  Guardian            ", d.guardian);
+        console2.log("  Timelock            ", d.timelock);
         console2.log("  WhitelistRegistry   ", d.whitelistRegistry);
         console2.log("  AdapterRegistry     ", d.adapterRegistry);
         console2.log("  CurveAdapter        ", d.curveAdapter);
