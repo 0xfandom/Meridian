@@ -2051,6 +2051,53 @@ function EarnView() {
               </div>
             );
           })}
+          {/* pool liquidity — fills the column and shows what is lent out vs withdrawable right now */}
+          {(() => {
+            const borrowed = pool.tvl * pool.util;
+            const available = Math.max(0, pool.tvl - borrowed);
+            return (
+              <div className="flex flex-1 flex-col rounded-2xl border border-hair/70 bg-white p-6 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-sans text-[15px] font-bold tracking-tight text-ink">
+                    Pool liquidity
+                  </h3>
+                  <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-m">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#0f9d6e]" />
+                    Live
+                  </span>
+                </div>
+                <p className="mt-2 max-w-[440px] text-[13px] leading-snug text-ink-s">
+                  Of every dollar supplied, the dark share is lent out to borrowers and earning the
+                  rate; the green share is idle and withdrawable right now.
+                </p>
+                <div className="mt-5 flex h-2.5 w-full overflow-hidden rounded-full bg-off">
+                  <div
+                    className="h-full bg-ink transition-all duration-500"
+                    style={{ width: `${pool.util * 100}%` }}
+                  />
+                  <div
+                    className="h-full bg-[#0f9d6e] transition-all duration-500"
+                    style={{ width: `${(1 - pool.util) * 100}%` }}
+                  />
+                </div>
+                <div className="mt-2.5 flex items-center gap-4 font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-m">
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-ink" />
+                    Borrowed
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-[#0f9d6e]" />
+                    Available
+                  </span>
+                </div>
+                <div className="mt-auto grid grid-cols-3 gap-3 border-t border-hair-lt pt-5">
+                  <Metric k="Pool size" v={fmtUSD(pool.tvl)} />
+                  <Metric k="Borrowed" v={fmtUSD(borrowed)} />
+                  <Metric k="Available" v={fmtUSD(available)} />
+                </div>
+              </div>
+            );
+          })()}
         </div>
         {/* earnings panel */}
         <div className="flex flex-col gap-5 rounded-2xl border border-hair/70 bg-white p-6 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
