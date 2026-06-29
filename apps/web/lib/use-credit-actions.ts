@@ -119,7 +119,16 @@ export function useCreditActions(
         setPhase("error");
       }
     },
-    [address, collateral, collateralDecimals, creditManager, facade, publicClient, writeContractAsync, onSuccess],
+    [
+      address,
+      collateral,
+      collateralDecimals,
+      creditManager,
+      facade,
+      publicClient,
+      writeContractAsync,
+      onSuccess,
+    ],
   );
 
   // Sends a single write, tracks the phase, waits for the receipt, then fires onSuccess. Used by
@@ -264,7 +273,15 @@ export function useCreditActions(
         setPhase("error");
       }
     },
-    [address, collateral, collateralDecimals, creditManager, publicClient, writeContractAsync, send],
+    [
+      address,
+      collateral,
+      collateralDecimals,
+      creditManager,
+      publicClient,
+      writeContractAsync,
+      send,
+    ],
   );
 
   return {

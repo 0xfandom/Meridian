@@ -69,7 +69,12 @@ async function enrich(
     const priceEntries = await Promise.all(
       tokens.map((token) =>
         client
-          .readContract({ address: oracle, abi: priceOracleAbi, functionName: "getPrice", args: [token] })
+          .readContract({
+            address: oracle,
+            abi: priceOracleAbi,
+            functionName: "getPrice",
+            args: [token],
+          })
           .then((price) => [token, price] as const),
       ),
     );
@@ -192,7 +197,12 @@ async function collectEvents(
   });
   const marketLogsP = config.markets.map(async (market) => {
     const [cmLogs, lmLogs] = await Promise.all([
-      client.getContractEvents({ abi: creditManagerAbi, address: market.creditManager, fromBlock, toBlock }),
+      client.getContractEvents({
+        abi: creditManagerAbi,
+        address: market.creditManager,
+        fromBlock,
+        toBlock,
+      }),
       client.getContractEvents({
         abi: liquidationModuleAbi,
         address: market.liquidationModule,
@@ -212,7 +222,8 @@ async function collectEvents(
       collateralToken: market.collateralToken,
       symbol: market.symbol,
     };
-    for (const log of cmLogs) push(events, decodeCreditManagerLog(log as unknown as DecodableLog, tag));
+    for (const log of cmLogs)
+      push(events, decodeCreditManagerLog(log as unknown as DecodableLog, tag));
     for (const log of lmLogs)
       push(events, decodeLiquidationModuleLog(log as unknown as DecodableLog));
   }

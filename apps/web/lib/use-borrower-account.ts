@@ -96,7 +96,10 @@ export function useBorrowerAccount(): BorrowerAccount | null | undefined {
   // sum. A single-collateral account values its one on-chain balance at its market price.
   const marketCollaterals = market?.collaterals;
   const isBasket = Boolean(
-    marketCollaterals && marketCollaterals.length > 0 && mine.collaterals && mine.collaterals.length > 0,
+    marketCollaterals &&
+    marketCollaterals.length > 0 &&
+    mine.collaterals &&
+    mine.collaterals.length > 0,
   );
 
   let collaterals: BorrowerCollateral[] | undefined;
@@ -109,7 +112,13 @@ export function useBorrowerAccount(): BorrowerAccount | null | undefined {
       );
       const cPrice = mc ? Number(formatUnits(BigInt(mc.priceUsdc), USDC_DECIMALS)) : 0;
       const amount = Number(formatUnits(BigInt(c.amount), c.decimals));
-      return { symbol: c.symbol, token: c.token as `0x${string}`, amount, price: cPrice, value: amount * cPrice };
+      return {
+        symbol: c.symbol,
+        token: c.token as `0x${string}`,
+        amount,
+        price: cPrice,
+        value: amount * cPrice,
+      };
     });
     collateralValue = collaterals.reduce((sum, c) => sum + c.value, 0);
     collateral = collaterals[0]?.amount ?? 0;

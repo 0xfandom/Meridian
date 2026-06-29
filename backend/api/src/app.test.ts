@@ -193,11 +193,15 @@ describe("API routes", () => {
     expect(link?.creditFacade).toBe("0x0000000000000000000000000000000000000a03");
     expect(link?.swapAdapter).toBe("0x0000000000000000000000000000000000000a04");
 
-    const pools = (await (await app.request("/pools")).json()) as { prices: Record<string, string> };
+    const pools = (await (await app.request("/pools")).json()) as {
+      prices: Record<string, string>;
+    };
     expect(pools.prices[WETH]).toBe("1676738970");
     expect(pools.prices[LINK]).toBe("7619119");
 
-    const accounts = (await (await app.request("/accounts")).json()) as Array<Record<string, string>>;
+    const accounts = (await (await app.request("/accounts")).json()) as Array<
+      Record<string, string>
+    >;
     expect(accounts[0]?.symbol).toBe("LINK");
     expect(accounts[0]?.collateralToken).toBe(LINK);
   });
