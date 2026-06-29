@@ -13,9 +13,12 @@ import {MarginAccount} from "../src/MarginAccount.sol";
 import {Pool} from "../src/Pool.sol";
 import {RiskConfigurator} from "../src/RiskConfigurator.sol";
 import {WhitelistRegistry} from "../src/WhitelistRegistry.sol";
+import {AdapterRegistry} from "../src/AdapterRegistry.sol";
 import {ChainlinkPriceOracle} from "../src/ChainlinkPriceOracle.sol";
 import {IChainlinkAggregator} from "../src/interfaces/IChainlinkAggregator.sol";
 import {UniswapV3Adapter} from "../src/adapters/UniswapV3Adapter.sol";
+import {CurveAdapter} from "../src/adapters/CurveAdapter.sol";
+import {LstAdapter} from "../src/adapters/LstAdapter.sol";
 import {Guardian} from "../src/governance/Guardian.sol";
 import {RiskParams} from "../src/libraries/RiskParams.sol";
 import {IGuardian} from "../src/interfaces/IGuardian.sol";
@@ -26,9 +29,13 @@ import {IPriceOracle} from "../src/interfaces/IPriceOracle.sol";
 import {IRiskConfigurator} from "../src/interfaces/IRiskConfigurator.sol";
 import {IUniswapV3SwapRouter} from "../src/interfaces/IUniswapV3SwapRouter.sol";
 import {IWhitelistRegistry} from "../src/interfaces/IWhitelistRegistry.sol";
+import {IAdapterRegistry} from "../src/interfaces/IAdapterRegistry.sol";
+import {IWstETH} from "../src/interfaces/IWstETH.sol";
 import {MockERC20} from "../test/mocks/MockERC20.sol";
 import {MockPriceOracle} from "../test/mocks/MockPriceOracle.sol";
 import {MockSwapRouter} from "../test/mocks/MockSwapRouter.sol";
+import {MockCurvePool} from "../test/mocks/MockCurvePool.sol";
+import {MockWstETH} from "../test/mocks/MockWstETH.sol";
 
 /// @title DeployScript
 /// @notice Deploys the full Meridian system and applies every wiring step. The local profile
@@ -87,7 +94,16 @@ contract DeployScript is Script {
         address accountImplementation;
         address guardian;
         address whitelistRegistry;
+        address adapterRegistry;
         address accessController;
+        // Shared periphery adapters (local: wrapped over mock venues), registered in the adapter
+        // registry and whitelisted so any market's account can route these ops through both gates.
+        address curveAdapter;
+        address curvePool;
+        address curveLp;
+        address lstAdapter;
+        address steth;
+        address wsteth;
         // Primary (WETH) market; the flat fields are also what the off-chain services read today.
         address weth;
         address creditManager;
@@ -172,6 +188,7 @@ contract DeployScript is Script {
         // --- Safety and access (shared) ---
         d.guardian = address(new Guardian(deployer, deployer));
         d.whitelistRegistry = address(new WhitelistRegistry(deployer));
+        d.adapterRegistry = address(new AdapterRegistry(deployer));
         d.accessController = address(new AccessController(deployer));
         Pool(d.pool).setGuardian(IGuardian(d.guardian));
         AccessController(d.accessController).grantRole(AccessController.Role.Keeper, config.keeper);
@@ -204,6 +221,72 @@ contract DeployScript is Script {
         d.basketLiquidationModule = basket.liquidationModule;
         d.basketSwapRouter = basket.swapRouter;
         d.basketSwapAdapter = basket.swapAdapter;
+
+        // --- Shared periphery adapters (Curve liquidity + LST wrap, registered + gated like swaps) ---
+        (d.curveAdapter, d.curvePool, d.curveLp) = _deployCurve(d);
+        (d.lstAdapter, d.steth, d.wsteth) = _deployLst(d);
+    }
+
+    /// @notice Deploys the shared Curve adapter over a local mock two-coin (USDC/WETH) pool, whitelists
+    ///         its liquidity selectors and the LP-token approve leg, and registers the adapter so any
+    ///         market's margin account can route Curve liquidity through the same whitelist + adapter
+    ///         gates as the swap adapter. The pool is a mock locally; a real Curve pool address is
+    ///         supplied by config on public networks (a follow-up, like the other live venues).
+    /// @dev This wires the adapter as a sanctioned action surface. Valuing a Curve LP position as
+    ///      account collateral (oracle price + risk haircut for the LP) is a separate strategy and is
+    ///      not configured here.
+    function _deployCurve(Deployment memory d) internal returns (address adapter, address pool, address lp) {
+        MockERC20 lpToken = new MockERC20("Curve USDC/WETH LP", "crvUSDCWETH", 18);
+        MockCurvePool curvePool = new MockCurvePool(d.usdc, d.weth, lpToken);
+        // Seed both coins so single-coin withdrawals can pay out locally.
+        MockERC20(d.usdc).mint(address(curvePool), 1_000_000e6);
+        MockERC20(d.weth).mint(address(curvePool), 1_000_000e18);
+        CurveAdapter curveAdapter = new CurveAdapter();
+
+        WhitelistRegistry whitelist = WhitelistRegistry(d.whitelistRegistry);
+        whitelist.setTarget(address(curveAdapter), true);
+        whitelist.setSelector(address(curveAdapter), CurveAdapter.addLiquidity.selector, true);
+        whitelist.setSelector(address(curveAdapter), CurveAdapter.removeLiquidityOneCoin.selector, true);
+        // LP-token approve leg (account -> adapter) for the withdraw path; mirrors the global USDC approve.
+        whitelist.setTarget(address(lpToken), true);
+        whitelist.setSelector(address(lpToken), IERC20.approve.selector, true);
+
+        AdapterRegistry(d.adapterRegistry).registerAdapter(address(curveAdapter), address(curvePool));
+
+        adapter = address(curveAdapter);
+        pool = address(curvePool);
+        lp = address(lpToken);
+    }
+
+    /// @notice Deploys the shared LST adapter over a local mock staked token (stETH) and its wrapper
+    ///         (wstETH), whitelists wrap/unwrap and both approve legs, and registers the adapter so any
+    ///         margin account can route wrap/unwrap through the whitelist + adapter gates. Mock tokens
+    ///         locally; real stETH/wstETH addresses are config-supplied on public networks (a follow-up).
+    /// @dev Like Curve, this wires the adapter as a sanctioned action surface; pricing wstETH as account
+    ///      collateral (oracle + haircut) is a separate strategy and is not configured here.
+    function _deployLst(Deployment memory d) internal returns (address adapter, address staked, address wrapped) {
+        MockERC20 steth = new MockERC20("Staked Ether", "stETH", 18);
+        MockWstETH wsteth = new MockWstETH(IERC20(address(steth)));
+        // Seed the wrapper with stETH so unwraps can pay out locally.
+        steth.mint(address(wsteth), 1_000_000e18);
+        LstAdapter lstAdapter = new LstAdapter(IERC20(address(steth)), IWstETH(address(wsteth)));
+
+        WhitelistRegistry whitelist = WhitelistRegistry(d.whitelistRegistry);
+        whitelist.setTarget(address(lstAdapter), true);
+        whitelist.setSelector(address(lstAdapter), LstAdapter.wrap.selector, true);
+        whitelist.setSelector(address(lstAdapter), LstAdapter.unwrap.selector, true);
+        // Approve legs (account -> adapter): stETH for wrap, wstETH for unwrap. Mirror the global USDC approve.
+        whitelist.setTarget(address(steth), true);
+        whitelist.setSelector(address(steth), IERC20.approve.selector, true);
+        whitelist.setTarget(address(wsteth), true);
+        whitelist.setSelector(address(wsteth), IERC20.approve.selector, true);
+
+        // The wrapped token is the external protocol the adapter wraps.
+        AdapterRegistry(d.adapterRegistry).registerAdapter(address(lstAdapter), address(wsteth));
+
+        adapter = address(lstAdapter);
+        staked = address(steth);
+        wrapped = address(wsteth);
     }
 
     /// @notice Reads a Chainlink feed, registers it on the oracle for `token`, and returns the live
@@ -258,12 +341,17 @@ contract DeployScript is Script {
         cm.setFacade(address(facade));
         cm.setGuardian(IGuardian(d.guardian));
         cm.setWhitelistRegistry(IWhitelistRegistry(d.whitelistRegistry));
+        cm.setAdapterRegistry(IAdapterRegistry(d.adapterRegistry));
         cm.setLiquidationModule(address(liquidation));
 
         // Whitelist this market's lever leg (USDC approve is whitelisted once, globally).
         WhitelistRegistry whitelist = WhitelistRegistry(d.whitelistRegistry);
         whitelist.setTarget(address(adapter), true);
         whitelist.setSelector(address(adapter), UniswapV3Adapter.swapExactInputSingle.selector, true);
+
+        // Register the adapter so it passes the credit manager's adapter gate: the adapter wraps the
+        // (mock) swap router, which is the external protocol it routes into.
+        AdapterRegistry(d.adapterRegistry).registerAdapter(address(adapter), address(router));
 
         m = Market({
             symbol: symbol,
@@ -315,6 +403,13 @@ contract DeployScript is Script {
         vm.serializeAddress(obj, "creditFacade", d.creditFacade);
         vm.serializeAddress(obj, "guardian", d.guardian);
         vm.serializeAddress(obj, "whitelistRegistry", d.whitelistRegistry);
+        vm.serializeAddress(obj, "adapterRegistry", d.adapterRegistry);
+        vm.serializeAddress(obj, "curveAdapter", d.curveAdapter);
+        vm.serializeAddress(obj, "curvePool", d.curvePool);
+        vm.serializeAddress(obj, "curveLp", d.curveLp);
+        vm.serializeAddress(obj, "lstAdapter", d.lstAdapter);
+        vm.serializeAddress(obj, "steth", d.steth);
+        vm.serializeAddress(obj, "wsteth", d.wsteth);
         vm.serializeAddress(obj, "accessController", d.accessController);
         vm.serializeAddress(obj, "liquidationModule", d.liquidationModule);
         vm.serializeAddress(obj, "swapRouter", d.swapRouter);
@@ -423,6 +518,11 @@ contract DeployScript is Script {
         console2.log("  MarginAccountImpl   ", d.accountImplementation);
         console2.log("  Guardian            ", d.guardian);
         console2.log("  WhitelistRegistry   ", d.whitelistRegistry);
+        console2.log("  AdapterRegistry     ", d.adapterRegistry);
+        console2.log("  CurveAdapter        ", d.curveAdapter);
+        console2.log("  CurvePool (mock)    ", d.curvePool);
+        console2.log("  LstAdapter          ", d.lstAdapter);
+        console2.log("  wstETH (mock)       ", d.wsteth);
         console2.log("  AccessController    ", d.accessController);
         Market[] memory markets = _markets(d);
         for (uint256 i = 0; i < markets.length; i++) {
