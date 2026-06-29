@@ -20,6 +20,11 @@ type Market struct {
 // creditManager/liquidationModule fields describe the primary market and are kept for back-compat;
 // Markets lists every market. Manifests written before multi-market support have no markets array,
 // so one is synthesised from the flat fields.
+//
+// BasketMarket is the multi-collateral market, written under its own key so services that only read
+// the single-collateral Markets array are unaffected. The keeper must watch it too, so Load folds it
+// into Markets: a basket account is health-checked and liquidated through its own credit manager and
+// liquidation module exactly like any other market.
 type Manifest struct {
 	Network           string   `json:"network"`
 	ChainID           uint64   `json:"chainId"`
@@ -27,6 +32,7 @@ type Manifest struct {
 	CreditManager     string   `json:"creditManager"`
 	LiquidationModule string   `json:"liquidationModule"`
 	Markets           []Market `json:"markets"`
+	BasketMarket      *Market  `json:"basketMarket"`
 }
 
 // Load reads and validates a manifest file, returning a precise error when a required address is
@@ -64,6 +70,22 @@ func Load(path string) (Manifest, error) {
 		if !isHexAddress(mkt.LiquidationModule) {
 			return Manifest{}, fmt.Errorf("manifest %s: markets[%d].liquidationModule must be a 20-byte hex address", path, i)
 		}
+	}
+
+	// Fold the basket market into Markets so the keeper watches it like any other: a basket account
+	// routes to the basket credit manager and liquidation module rather than the default fallback.
+	if m.BasketMarket != nil {
+		b := *m.BasketMarket
+		if !isHexAddress(b.CreditManager) {
+			return Manifest{}, fmt.Errorf("manifest %s: basketMarket.creditManager must be a 20-byte hex address", path)
+		}
+		if !isHexAddress(b.LiquidationModule) {
+			return Manifest{}, fmt.Errorf("manifest %s: basketMarket.liquidationModule must be a 20-byte hex address", path)
+		}
+		if b.Symbol == "" {
+			b.Symbol = "basket"
+		}
+		m.Markets = append(m.Markets, b)
 	}
 
 	return m, nil

@@ -88,6 +88,47 @@ func TestLoadParsesMarketsArray(t *testing.T) {
 	}
 }
 
+func TestLoadFoldsBasketMarketIntoMarkets(t *testing.T) {
+	const basketCM = "0x0000000000000000000000000000000000000f06"
+	const basketModule = "0x000000000000000000000000000000000000010A"
+	path := writeManifest(t, `{
+		"creditManager": "`+creditManager+`",
+		"liquidationModule": "`+liquidationModule+`",
+		"markets": [
+			{ "symbol": "WETH", "creditManager": "`+creditManager+`", "liquidationModule": "`+liquidationModule+`" }
+		],
+		"basketMarket": { "creditManager": "`+basketCM+`", "liquidationModule": "`+basketModule+`" }
+	}`)
+
+	m, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// The basket market is appended after the single-collateral markets.
+	if len(m.Markets) != 2 {
+		t.Fatalf("markets = %d, want 2 (WETH + basket)", len(m.Markets))
+	}
+	basket := m.Markets[len(m.Markets)-1]
+	if basket.CreditManager != basketCM || basket.LiquidationModule != basketModule {
+		t.Errorf("basket market = %+v, want %s/%s", basket, basketCM, basketModule)
+	}
+	if basket.Symbol != "basket" {
+		t.Errorf("basket symbol = %q, want defaulted to \"basket\"", basket.Symbol)
+	}
+}
+
+func TestLoadRejectsMalformedBasketMarket(t *testing.T) {
+	path := writeManifest(t, `{
+		"creditManager": "`+creditManager+`",
+		"liquidationModule": "`+liquidationModule+`",
+		"basketMarket": { "creditManager": "0xnothex", "liquidationModule": "`+liquidationModule+`" }
+	}`)
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected error for malformed basketMarket creditManager, got nil")
+	}
+}
+
 func TestLoadSynthesisesPrimaryMarketWhenAbsent(t *testing.T) {
 	path := writeManifest(t, `{
 		"creditManager": "`+creditManager+`",
