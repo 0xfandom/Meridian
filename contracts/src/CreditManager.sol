@@ -15,6 +15,7 @@ import {IPriceOracle} from "./interfaces/IPriceOracle.sol";
 import {IRiskConfigurator} from "./interfaces/IRiskConfigurator.sol";
 import {IGuardian} from "./interfaces/IGuardian.sol";
 import {IWhitelistRegistry} from "./interfaces/IWhitelistRegistry.sol";
+import {IAdapterRegistry} from "./interfaces/IAdapterRegistry.sol";
 import {ILiquidationTarget} from "./interfaces/ILiquidationTarget.sol";
 import {MarginAccount} from "./MarginAccount.sol";
 
@@ -55,6 +56,7 @@ contract CreditManager is Ownable, ReentrancyGuard, ILiquidationTarget {
     IRiskConfigurator public riskConfigurator;
     IGuardian public guardian;
     IWhitelistRegistry public whitelistRegistry;
+    IAdapterRegistry public adapterRegistry;
     address public liquidationModule;
     address public facade;
 
@@ -88,6 +90,7 @@ contract CreditManager is Ownable, ReentrancyGuard, ILiquidationTarget {
     event RiskConfiguratorSet(address indexed riskConfigurator);
     event GuardianSet(address indexed guardian);
     event WhitelistRegistrySet(address indexed whitelistRegistry);
+    event AdapterRegistrySet(address indexed adapterRegistry);
     event LiquidationModuleSet(address indexed liquidationModule);
     event FacadeSet(address indexed facade);
     event CollateralTokenAdded(address indexed token);
@@ -101,6 +104,7 @@ contract CreditManager is Ownable, ReentrancyGuard, ILiquidationTarget {
     error AccountNotEmpty();
     error Undercollateralized();
     error CallNotWhitelisted(address target, bytes4 selector);
+    error TargetNotAdapter(address target);
     error NotCollateral(address token);
     error AlreadyCollateral(address token);
     error CannotRemovePrimary();
@@ -168,6 +172,14 @@ contract CreditManager is Ownable, ReentrancyGuard, ILiquidationTarget {
     function setWhitelistRegistry(IWhitelistRegistry whitelistRegistry_) external onlyOwner {
         whitelistRegistry = whitelistRegistry_;
         emit WhitelistRegistrySet(address(whitelistRegistry_));
+    }
+
+    /// @notice Sets (or clears) the adapter allowlist. When unset, the adapter gate is off; once set,
+    ///         every routed call other than a token approve must target a registered adapter. This is
+    ///         an independent second gate alongside the whitelist: a call must satisfy both.
+    function setAdapterRegistry(IAdapterRegistry adapterRegistry_) external onlyOwner {
+        adapterRegistry = adapterRegistry_;
+        emit AdapterRegistrySet(address(adapterRegistry_));
     }
 
     /// @notice Sets the module permitted to trigger liquidations. Until set, liquidation is
@@ -436,13 +448,19 @@ contract CreditManager is Ownable, ReentrancyGuard, ILiquidationTarget {
         _accrueIndex();
 
         IWhitelistRegistry registry = whitelistRegistry;
+        IAdapterRegistry adapters = adapterRegistry;
         uint256 len = calls.length;
         for (uint256 i = 0; i < len; i++) {
             address target = calls[i].target;
             bytes calldata callData = calls[i].callData;
+            bytes4 selector = callData.length >= 4 ? bytes4(callData[:4]) : bytes4(0);
             if (address(registry) != address(0)) {
-                bytes4 selector = callData.length >= 4 ? bytes4(callData[:4]) : bytes4(0);
                 if (!registry.isAllowed(target, selector)) revert CallNotWhitelisted(target, selector);
+            }
+            // Independent second gate: every routed call must hit a registered adapter, except the
+            // token-approve leg that funds an adapter (its target is the token, not the adapter).
+            if (address(adapters) != address(0) && selector != IERC20.approve.selector) {
+                if (!adapters.isAdapter(target)) revert TargetNotAdapter(target);
             }
             MarginAccount(account).execute(target, callData);
         }

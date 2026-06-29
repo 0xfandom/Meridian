@@ -6,6 +6,10 @@ import {DeployScript} from "../script/Deploy.s.sol";
 import {Pool} from "../src/Pool.sol";
 import {CreditManager} from "../src/CreditManager.sol";
 import {AccessController} from "../src/AccessController.sol";
+import {AdapterRegistry} from "../src/AdapterRegistry.sol";
+import {WhitelistRegistry} from "../src/WhitelistRegistry.sol";
+import {CurveAdapter} from "../src/adapters/CurveAdapter.sol";
+import {LstAdapter} from "../src/adapters/LstAdapter.sol";
 import {MockPriceOracle} from "./mocks/MockPriceOracle.sol";
 
 /// @notice Runs the deployment script and asserts every wiring step was applied, so deployment
@@ -87,6 +91,50 @@ contract DeployScriptTest is Test {
         assertEq(set.length, 2);
     }
 
+    function test_AdapterRegistryWiredAsGate() public view {
+        assertTrue(d.adapterRegistry != address(0));
+        // Every credit manager consults the shared adapter registry.
+        assertEq(address(CreditManager(d.creditManager).adapterRegistry()), d.adapterRegistry);
+        assertEq(address(CreditManager(d.linkCreditManager).adapterRegistry()), d.adapterRegistry);
+        // Each market's swap adapter is registered against the router it wraps.
+        AdapterRegistry registry = AdapterRegistry(d.adapterRegistry);
+        assertTrue(registry.isAdapter(d.swapAdapter));
+        assertEq(registry.adapterTarget(d.swapAdapter), d.swapRouter);
+        assertTrue(registry.isAdapter(d.linkSwapAdapter));
+        assertEq(registry.adapterTarget(d.linkSwapAdapter), d.linkSwapRouter);
+    }
+
+    function test_CurveAdapterDeployedWiredAndRegistered() public view {
+        assertTrue(d.curveAdapter != address(0) && d.curvePool != address(0) && d.curveLp != address(0));
+
+        // Registered against the (mock) pool it wraps, so it clears the adapter gate.
+        AdapterRegistry registry = AdapterRegistry(d.adapterRegistry);
+        assertTrue(registry.isAdapter(d.curveAdapter));
+        assertEq(registry.adapterTarget(d.curveAdapter), d.curvePool);
+
+        // Its liquidity selectors and the LP-token approve leg are whitelisted.
+        WhitelistRegistry whitelist = WhitelistRegistry(d.whitelistRegistry);
+        assertTrue(whitelist.isAllowed(d.curveAdapter, CurveAdapter.addLiquidity.selector));
+        assertTrue(whitelist.isAllowed(d.curveAdapter, CurveAdapter.removeLiquidityOneCoin.selector));
+        assertTrue(whitelist.allowedTarget(d.curveLp));
+    }
+
+    function test_LstAdapterDeployedWiredAndRegistered() public view {
+        assertTrue(d.lstAdapter != address(0) && d.steth != address(0) && d.wsteth != address(0));
+
+        // Registered against the wrapper it wraps into, so it clears the adapter gate.
+        AdapterRegistry registry = AdapterRegistry(d.adapterRegistry);
+        assertTrue(registry.isAdapter(d.lstAdapter));
+        assertEq(registry.adapterTarget(d.lstAdapter), d.wsteth);
+
+        // wrap/unwrap and both approve legs are whitelisted.
+        WhitelistRegistry whitelist = WhitelistRegistry(d.whitelistRegistry);
+        assertTrue(whitelist.isAllowed(d.lstAdapter, LstAdapter.wrap.selector));
+        assertTrue(whitelist.isAllowed(d.lstAdapter, LstAdapter.unwrap.selector));
+        assertTrue(whitelist.allowedTarget(d.steth));
+        assertTrue(whitelist.allowedTarget(d.wsteth));
+    }
+
     /// @notice The manifest round-trips: writing it and parsing it back yields the same addresses and
     ///         chain metadata the services need to start with no manual address entry.
     function test_ManifestRoundTrips() public {
@@ -117,6 +165,11 @@ contract DeployScriptTest is Test {
         assertEq(vm.parseJsonAddress(json, ".basketMarket.collaterals[0].collateralToken"), d.weth);
         assertEq(vm.parseJsonString(json, ".basketMarket.collaterals[1].symbol"), "LINK");
         assertEq(vm.parseJsonAddress(json, ".basketMarket.collaterals[1].collateralToken"), d.link);
+
+        // Shared periphery adapters are carried so the services can read them.
+        assertEq(vm.parseJsonAddress(json, ".adapterRegistry"), d.adapterRegistry);
+        assertEq(vm.parseJsonAddress(json, ".curveAdapter"), d.curveAdapter);
+        assertEq(vm.parseJsonAddress(json, ".lstAdapter"), d.lstAdapter);
 
         vm.removeFile(path);
     }
