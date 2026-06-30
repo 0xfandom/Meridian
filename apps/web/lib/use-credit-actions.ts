@@ -46,7 +46,12 @@ export interface CreditActions {
   open: (collateralAmount: number, borrowUsdc: number) => Promise<void>;
   borrow: (account: `0x${string}`, amountUsdc: number) => Promise<void>;
   repay: (account: `0x${string}`, amountUsdc: number) => Promise<void>;
-  addCollateral: (account: `0x${string}`, amount: number) => Promise<void>;
+  addCollateral: (
+    account: `0x${string}`,
+    amount: number,
+    token?: `0x${string}`,
+    decimals?: number,
+  ) => Promise<void>;
   withdrawCollateral: (account: `0x${string}`, amount: number) => Promise<void>;
   lever: (account: `0x${string}`, amountUsdc: number) => Promise<void>;
   close: (account: `0x${string}`) => Promise<void>;
@@ -240,14 +245,20 @@ export function useCreditActions(
   );
 
   // addCollateral pulls collateral from the wallet, so approve the credit manager first when short.
+  // With no token it tops up the market's primary collateral; a basket account passes a specific
+  // registered collateral (and its decimals) to top up that asset via the token overload.
   const addCollateral = useCallback(
-    async (account: `0x${string}`, amount: number) => {
+    async (account: `0x${string}`, amount: number, token?: `0x${string}`, decimals?: number) => {
       if (!address || !collateral || !creditManager || !publicClient) return;
-      const amountWei = parseUnits(amount.toString(), collateralDecimals);
+      const tokenAddr = token ?? collateral;
+      const dec = decimals ?? collateralDecimals;
+      const isPrimary = tokenAddr.toLowerCase() === collateral.toLowerCase();
+      const amountWei = parseUnits(amount.toString(), dec);
       try {
         setError(undefined);
+        // Approve the chosen token (not always the primary) since the manager pulls it.
         const allowance = await publicClient.readContract({
-          address: collateral,
+          address: tokenAddr,
           abi: erc20Abi,
           functionName: "allowance",
           args: [address, creditManager],
@@ -255,19 +266,29 @@ export function useCreditActions(
         if (allowance < amountWei) {
           setPhase("approving");
           const approveHash = await writeContractAsync({
-            address: collateral,
+            address: tokenAddr,
             abi: erc20Abi,
             functionName: "approve",
             args: [creditManager, amountWei],
           });
           await publicClient.waitForTransactionReceipt({ hash: approveHash });
         }
-        await send("adding", {
-          address: creditManager,
-          abi: creditManagerAbi,
-          functionName: "addCollateral",
-          args: [account, amountWei],
-        });
+        await send(
+          "adding",
+          isPrimary
+            ? {
+                address: creditManager,
+                abi: creditManagerAbi,
+                functionName: "addCollateral",
+                args: [account, amountWei],
+              }
+            : {
+                address: creditManager,
+                abi: creditManagerAbi,
+                functionName: "addCollateral",
+                args: [account, tokenAddr, amountWei],
+              },
+        );
       } catch (e) {
         setError(toMessage(e));
         setPhase("error");

@@ -52,7 +52,10 @@ export const POOL_FEE = 500; // the local DEX fee tier the seed/deploy use
 export const faucetAbi = parseAbi(["function mint(address to, uint256 amount)"]);
 
 // addCollateral is not on the facade; the owner calls the credit manager directly (it pulls the
-// collateral from the caller, so the manager is the approval target).
+// collateral from the caller, so the manager is the approval target). The single-arg overload tops up
+// the market's primary collateral; the token overload tops up any registered collateral of a basket
+// market, so the UI can let the owner choose which asset to add.
 export const creditManagerAbi = parseAbi([
   "function addCollateral(address account, uint256 amount)",
+  "function addCollateral(address account, address token, uint256 amount)",
 ]);

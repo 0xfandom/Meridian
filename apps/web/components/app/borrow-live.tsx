@@ -487,16 +487,21 @@ function PositionCard({ account }: { account: BorrowerAccount }) {
     setManage(kind);
   };
 
-  const metrics = [
-    {
-      k: "Collateral",
-      v: account.collaterals ? "Basket" : `${account.collateral.toFixed(4)} ${account.symbol}`,
-      sub: usd(account.collateralValue),
-    },
-    { k: "Debt", v: usd(account.debt), sub: "USDC drawn" },
-    { k: "Account value", v: usd(account.equity), sub: "equity" },
-    { k: "Leverage", v: `${account.leverage.toFixed(2)}x`, sub: `${usd(account.assets)} gross` },
-  ];
+  // Risk presentation for the health gauge: clamp HF into a 1.0–3.0 band for the bar fill, and pick a
+  // status label + colour. No debt (infinite HF) reads as fully healthy.
+  const h = account.health;
+  const hFinite = Number.isFinite(h);
+  const gaugeFill = hFinite ? Math.max(0, Math.min(1, (h - 1) / 2)) : 1;
+  const risk =
+    !hFinite || h >= 1.5
+      ? {
+          label: hFinite ? "Healthy" : "No debt",
+          bar: "bg-[#0f9d6e]",
+          pill: "bg-[#e7f6ee] text-[#0f9d6e]",
+        }
+      : h >= 1.15
+        ? { label: "Caution", bar: "bg-[#d99100]", pill: "bg-[#fdf3e3] text-[#a86a00]" }
+        : { label: "At risk", bar: "bg-red", pill: "bg-red/10 text-red" };
 
   return (
     <>
@@ -515,18 +520,57 @@ function PositionCard({ account }: { account: BorrowerAccount }) {
               </span>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-hair/70 bg-hair/70">
-            {metrics.map((m) => (
-              <div key={m.k} className="bg-white px-4 py-4">
-                <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-f">
-                  {m.k}
-                </div>
-                <div className="mt-1 font-sans text-[18px] font-bold tracking-tight text-ink">
-                  {m.v}
-                </div>
-                <div className="mt-0.5 font-mono text-[11px] text-ink-m">{m.sub}</div>
+          {/* hero: net equity + leverage */}
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-f">
+                Account value
               </div>
-            ))}
+              <div className="mt-1.5 font-sans text-[46px] font-extrabold leading-[0.9] tracking-tight text-ink">
+                {usd(account.equity)}
+              </div>
+              <div className="mt-2 font-mono text-[11px] text-ink-m">
+                Net equity · collateral minus debt
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-f">
+                Leverage
+              </div>
+              <div className="mt-1.5 font-sans text-[32px] font-extrabold leading-none tracking-tight text-ink">
+                {account.leverage.toFixed(2)}
+                <span className="text-[18px] text-ink-m">x</span>
+              </div>
+              <div className="mt-2 font-mono text-[11px] text-ink-m">
+                {usd(account.assets)} gross
+              </div>
+            </div>
+          </div>
+
+          {/* secondary strip: collateral + debt */}
+          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-hair/70 bg-hair/70">
+            <div className="bg-white px-4 py-3.5">
+              <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-f">
+                Collateral
+              </div>
+              <div className="mt-1 font-sans text-[22px] font-bold tracking-tight text-ink">
+                {usd(account.collateralValue)}
+              </div>
+              <div className="mt-0.5 font-mono text-[11px] text-ink-m">
+                {account.collaterals
+                  ? "Basket"
+                  : `${account.collateral.toFixed(4)} ${account.symbol}`}
+              </div>
+            </div>
+            <div className="bg-white px-4 py-3.5">
+              <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-f">
+                Debt
+              </div>
+              <div className="mt-1 font-sans text-[22px] font-bold tracking-tight text-ink">
+                {usd(account.debt)}
+              </div>
+              <div className="mt-0.5 font-mono text-[11px] text-ink-m">USDC drawn</div>
+            </div>
           </div>
           {/* basket collateral breakdown */}
           {account.collaterals && (
@@ -535,17 +579,32 @@ function PositionCard({ account }: { account: BorrowerAccount }) {
                 <span>Collateral assets</span>
                 <span>Value</span>
               </div>
-              {account.collaterals.map((c) => (
-                <div
-                  key={c.token}
-                  className="flex items-center justify-between border-t border-hair/70 px-4 py-2.5"
-                >
-                  <div className="font-sans text-[13.5px] font-semibold text-ink">
-                    {c.amount.toFixed(4)} <span className="text-ink-m">{c.symbol}</span>
+              {account.collaterals.map((c) => {
+                const share = account.collateralValue > 0 ? c.value / account.collateralValue : 0;
+                return (
+                  <div key={c.token} className="border-t border-hair/70 px-4 py-3">
+                    <div className="flex items-center justify-between">
+                      <div className="font-sans text-[14px] font-semibold text-ink">
+                        {c.amount.toFixed(4)} <span className="text-ink-m">{c.symbol}</span>
+                      </div>
+                      <div className="font-mono text-[13px] font-semibold tabular-nums text-ink">
+                        {usd(c.value)}
+                      </div>
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-off">
+                        <div
+                          className="h-full rounded-full bg-ink transition-all duration-500"
+                          style={{ width: `${share * 100}%` }}
+                        />
+                      </div>
+                      <span className="w-9 text-right font-mono text-[10px] tabular-nums text-ink-f">
+                        {(share * 100).toFixed(0)}%
+                      </span>
+                    </div>
                   </div>
-                  <div className="font-mono text-[12.5px] text-ink-m">{usd(c.value)}</div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
           {/* manage actions */}
@@ -568,31 +627,53 @@ function PositionCard({ account }: { account: BorrowerAccount }) {
 
         {/* risk */}
         <div className="flex flex-col gap-5 rounded-2xl border border-hair/70 bg-white p-6 shadow-[0_1px_2px_rgba(10,10,10,0.04),0_10px_30px_-16px_rgba(10,10,10,0.12)]">
-          <h2 className="font-sans text-[16px] font-bold tracking-tight text-ink">Risk</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="font-sans text-[16px] font-bold tracking-tight text-ink">Risk</h2>
+            <span
+              className={`rounded-full px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] ${risk.pill}`}
+            >
+              {risk.label}
+            </span>
+          </div>
+
+          {/* health factor hero + gauge */}
           <div>
             <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-f">
               Health factor
             </div>
             <div
-              className={`mt-1 font-sans text-[34px] font-extrabold tracking-tight ${healthColor(account.health)}`}
+              className={`mt-1 font-sans text-[54px] font-extrabold leading-[0.9] tracking-tight ${healthColor(account.health)}`}
             >
-              {Number.isFinite(account.health) ? account.health.toFixed(2) : "∞"}
+              {hFinite ? account.health.toFixed(2) : "∞"}
+            </div>
+            <div className="mt-3">
+              <div className="h-2 w-full overflow-hidden rounded-full bg-off">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${risk.bar}`}
+                  style={{ width: `${gaugeFill * 100}%` }}
+                />
+              </div>
+              <div className="mt-1 flex justify-between font-mono text-[9px] uppercase tracking-[0.1em] text-ink-f">
+                <span>1.0 · liquidation</span>
+                <span>3.0+ safe</span>
+              </div>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
+
+          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-hair/70 bg-hair/70">
+            <div className="bg-white px-4 py-3.5">
               <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-f">
                 Mark price
               </div>
-              <div className="mt-1 font-mono text-[15px] font-semibold text-ink">
+              <div className="mt-1 font-sans text-[20px] font-bold tracking-tight text-ink">
                 {usd(account.price)}
               </div>
             </div>
-            <div>
+            <div className="bg-white px-4 py-3.5">
               <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-f">
                 Liquidation
               </div>
-              <div className="mt-1 font-mono text-[15px] font-semibold text-ink">
+              <div className="mt-1 font-sans text-[20px] font-bold tracking-tight text-ink">
                 {account.collaterals || account.debt === 0 ? "—" : usd(account.liquidationPrice)}
               </div>
             </div>
@@ -653,7 +734,29 @@ function ManageModal({
   const [raw, setRaw] = useState("");
   const amt = parseFloat(raw) || 0;
   const symbol = account.symbol;
-  const walletCollateral = collateralByToken(balances, account.collateralToken)?.amount ?? 0;
+
+  // Add-collateral asset picker. A basket market exposes several registered collaterals, so the owner
+  // chooses which to top up; a single-collateral market has one asset, so the picker stays hidden.
+  const addOptions =
+    account.market?.collaterals && account.market.collaterals.length > 0
+      ? account.market.collaterals.map((col) => ({
+          token: col.collateralToken as `0x${string}`,
+          symbol: col.symbol,
+          decimals: col.decimals,
+        }))
+      : [
+          {
+            token: account.collateralToken,
+            symbol: account.symbol,
+            decimals: account.collateralDecimals,
+          },
+        ];
+  const [addToken, setAddToken] = useState<`0x${string}`>(
+    addOptions.find((o) => o.token.toLowerCase() === account.collateralToken.toLowerCase())
+      ?.token ?? addOptions[0]!.token,
+  );
+  const addSelected = addOptions.find((o) => o.token === addToken) ?? addOptions[0]!;
+  const addWalletMax = collateralByToken(balances, addToken)?.amount ?? 0;
 
   const phase = actions.phase;
   const busy =
@@ -696,9 +799,10 @@ function ManageModal({
     },
     add: {
       title: "Add collateral",
-      unit: symbol,
-      max: walletCollateral,
-      run: () => actions.addCollateral(account.account, amt),
+      unit: addSelected.symbol,
+      max: addWalletMax,
+      run: () =>
+        actions.addCollateral(account.account, amt, addSelected.token, addSelected.decimals),
     },
     withdraw: {
       title: "Withdraw collateral",
@@ -746,6 +850,36 @@ function ManageModal({
           </p>
         ) : (
           <div className="rounded-2xl border border-hair bg-off p-4">
+            {kind === "add" && addOptions.length > 1 && (
+              <div className="mb-3 border-b border-hair pb-3">
+                <div className="mb-1.5 font-mono text-[10.5px] uppercase tracking-[0.16em] text-ink-m">
+                  Asset
+                </div>
+                <div className="flex gap-2">
+                  {addOptions.map((o) => {
+                    const active = o.token === addToken;
+                    return (
+                      <button
+                        key={o.token}
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          setAddToken(o.token);
+                          setRaw("");
+                        }}
+                        className={`flex-1 rounded-lg border px-3 py-2 text-[13px] font-semibold transition-colors ${
+                          active
+                            ? "border-ink bg-ink text-white"
+                            : "border-hair bg-white text-ink hover:border-ink"
+                        }`}
+                      >
+                        {o.symbol}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-between font-mono text-[10.5px] uppercase tracking-[0.16em] text-ink-m">
               <span>Amount ({c.unit})</span>
               {c.max !== undefined && <span>Max: {isToken ? c.max.toFixed(4) : usd(c.max)}</span>}
