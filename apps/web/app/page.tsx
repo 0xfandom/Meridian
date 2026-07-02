@@ -2,7 +2,6 @@ import Link from "next/link";
 import { ArrowRight, ArrowUpRight, Coins, TrendingUp, Landmark, Check } from "lucide-react";
 import { HeroCards } from "@/components/hero-cards";
 import { LandingNav } from "@/components/landing-nav";
-import { CursorTrail } from "@/components/app/cursor-trail";
 import { LandingGsap } from "@/components/landing-gsap";
 
 const PILLARS = [
@@ -247,7 +246,6 @@ const USERS = [
 export default function Page() {
   return (
     <main className="min-h-screen space-y-3 bg-ink p-3 sm:space-y-4 sm:p-4">
-      <CursorTrail />
       <LandingGsap />
       {/* framed off-white panel */}
       <div className="relative flex min-h-[900px] flex-col overflow-hidden rounded-[26px] bg-[#f1f1ef] lg:h-[calc(100vh-2rem)] lg:min-h-[760px]">
